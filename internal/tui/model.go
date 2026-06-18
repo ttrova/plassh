@@ -635,7 +635,8 @@ func (m Model) View() string {
 		Grid:   m.grid, Width: m.canvasW, Height: m.canvasH,
 		CamX: m.camX, CamY: m.camY, PixelCols: pw, PixelRows: ph,
 		CursorX: m.cursorX, CursorY: m.cursorY, SelectedColor: m.selectedColor,
-		Remotes: m.remoteCursors(),
+		OwnStyle: render.StyleFor(m.id),
+		Remotes:  m.remoteCursors(),
 	})
 
 	// Highlight the sides where the true canvas edge is currently in view, so the
@@ -703,8 +704,8 @@ func (m Model) helpView() string {
 
 func (m Model) remoteCursors() []render.RemoteCursor {
 	out := make([]render.RemoteCursor, 0, len(m.remotes))
-	for _, r := range m.remotes {
-		out = append(out, render.RemoteCursor{X: r.x, Y: r.y, Color: r.color})
+	for id, r := range m.remotes {
+		out = append(out, render.RemoteCursor{X: r.x, Y: r.y, Color: r.color, Style: render.StyleFor(id)})
 	}
 	return out
 }
