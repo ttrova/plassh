@@ -2,3 +2,5 @@
 /host_key.pub
 bin/
 *.exe
+/server
+/plassh
