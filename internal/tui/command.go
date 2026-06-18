@@ -20,6 +20,7 @@ const (
 	cmdFlood
 	cmdClear
 	cmdHelp
+	cmdLogin
 )
 
 // command is the result of parsing a command-line entry (without the leading
@@ -30,7 +31,8 @@ type command struct {
 	name         string // canonical command name (for disable checks / messages)
 	x, y, x2, y2 int    // tp/fill/line coordinates
 	size         int    // circle radius
-	count        int    // undo count
+	count        int    // undo/redo count
+	arg          string // login password
 	err          string // usage / parse error
 }
 
@@ -92,6 +94,11 @@ func parseCommand(input string) command {
 		return command{kind: cmdClear, name: name}
 	case "help":
 		return command{kind: cmdHelp, name: name}
+	case "login":
+		if len(args) != 1 {
+			return command{err: "usage: /login <password>"}
+		}
+		return command{kind: cmdLogin, name: name, arg: args[0]}
 	default:
 		return command{err: fmt.Sprintf("unknown command: %s", name)}
 	}

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CANVAS_WIDTH", "")
@@ -38,6 +41,36 @@ func TestLoadDisabledCommands(t *testing.T) {
 	}
 	if c.DisabledCommands["tp"] {
 		t.Error("tp should not be disabled")
+	}
+}
+
+func TestLoadAdminAndCooldown(t *testing.T) {
+	t.Setenv("ADMIN_PASSWORD", "secret")
+	t.Setenv("ADMIN_COMMANDS", "clear, fill")
+	t.Setenv("PAINT_COOLDOWN_MS", "250")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.AdminPassword != "secret" {
+		t.Errorf("AdminPassword = %q", c.AdminPassword)
+	}
+	if !c.AdminCommands["clear"] || !c.AdminCommands["fill"] || c.AdminAll {
+		t.Errorf("AdminCommands = %v all=%v", c.AdminCommands, c.AdminAll)
+	}
+	if c.PaintCooldown != 250*time.Millisecond {
+		t.Errorf("PaintCooldown = %v, want 250ms", c.PaintCooldown)
+	}
+}
+
+func TestLoadAdminAllWildcard(t *testing.T) {
+	t.Setenv("ADMIN_COMMANDS", "*")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !c.AdminAll {
+		t.Error("expected AdminAll for '*'")
 	}
 }
 

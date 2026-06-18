@@ -9,8 +9,13 @@ services:
       CANVAS_HEIGHT: "90"
       SSH_PORT: "2222"
       SSH_HOST_KEY: /data/host_key
-      # Comma-separated slash commands to disable, e.g. "clear,fill". Empty = all enabled.
+      # Comma-separated slash commands to hard-disable, e.g. "clear,fill". Empty = all enabled.
       DISABLED_COMMANDS: ""
+      # Admin: set a password to enable /login. ADMIN_COMMANDS lists admin-only
+      # commands ("*" = all). PAINT_COOLDOWN_MS throttles paints (0 = off, admins exempt).
+      ADMIN_PASSWORD: ""
+      ADMIN_COMMANDS: ""
+      PAINT_COOLDOWN_MS: "0"
     volumes:
       - hostkey:/data
     restart: on-failure

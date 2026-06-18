@@ -51,18 +51,22 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 		existing, _ := pr.LoadAll(ctx)
 
 		m := tui.New(tui.Deps{
-			Ctx:       ctx,
-			Renderer:  bm.MakeRenderer(s), // per-session color profile from the client's TERM
-			Width:     cfg.Width,
-			Height:    cfg.Height,
-			Grid:      grid,
-			Name:      name,
-			ID:        id,
-			Painter:   cv,
-			Announcer: pr,
-			Pixels:    pixCh,
-			Presence:  presCh,
-			Disabled:  cfg.DisabledCommands,
+			Ctx:           ctx,
+			Renderer:      bm.MakeRenderer(s), // per-session color profile from the client's TERM
+			Width:         cfg.Width,
+			Height:        cfg.Height,
+			Grid:          grid,
+			Name:          name,
+			ID:            id,
+			Painter:       cv,
+			Announcer:     pr,
+			Pixels:        pixCh,
+			Presence:      presCh,
+			Disabled:      cfg.DisabledCommands,
+			AdminPassword: cfg.AdminPassword,
+			AdminCommands: cfg.AdminCommands,
+			AdminAll:      cfg.AdminAll,
+			Cooldown:      cfg.PaintCooldown,
 		})
 		m = tui.WithExisting(m, existing, id)
 

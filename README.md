@@ -41,14 +41,18 @@ Press `/` to open a command line in the status bar, type, then **Enter** to run
 | `/clear`              | Clear the whole canvas                                       |
 | `/undo [n]`           | Undo your last `n` actions (default 1, max 10)               |
 | `/redo [n]`           | Redo previously undone actions (default 1, max 10)           |
+| `/login <password>`   | Gain admin access (password from `ADMIN_PASSWORD`)           |
 | `/help`               | Show the command list                                        |
 
 An action is one dab, one `/circle`/`/fill`/`/line`/`/clear`, or one draw stroke.
 Undo is per-session and in-memory: it restores each affected pixel to the color
 it had before your action (last-write-wins, so it can overwrite others' later edits).
 
-Commands can be disabled by the operator via the `DISABLED_COMMANDS` environment
-variable (comma-separated names, e.g. `DISABLED_COMMANDS=clear,fill`).
+**Operator controls (env vars):**
+- `DISABLED_COMMANDS` — hard-disable commands for everyone (comma-separated, e.g. `clear,fill`).
+- `ADMIN_PASSWORD` — enables `/login`; unset means no admin.
+- `ADMIN_COMMANDS` — commands that require admin (comma-separated). Use `*` to require admin for **all** commands (`/login` and `/help` always stay open).
+- `PAINT_COOLDOWN_MS` — minimum delay between paint actions (dabs, draw-mode pixels, and paint commands); `0` disables it. Admins are exempt.
 
 Your cursor — and every other user's — is a top/bottom half-shade square
 (`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**
@@ -64,7 +68,10 @@ shapes; the status bar shows `DRAW` while it's active. Press `d` again to stop.
 | `REDIS_ADDR`    | `localhost:6379` | Redis address          |
 | `SSH_PORT`      | `2222`           | SSH listen port        |
 | `SSH_HOST_KEY`  | `./host_key`     | Host key path (auto-generated if missing) |
-| `DISABLED_COMMANDS` | (none)       | Comma-separated slash commands to disable |
+| `DISABLED_COMMANDS` | (none)       | Comma-separated slash commands to hard-disable |
+| `ADMIN_PASSWORD`    | (none)       | Enables `/login`; unset disables admin    |
+| `ADMIN_COMMANDS`    | (none)       | Commands requiring admin (`*` = all)      |
+| `PAINT_COOLDOWN_MS` | `0`          | Min ms between paint actions (0 = off; admins exempt) |
 
 State lives in Redis (canvas grid + presence), so it survives app restarts as long
 as the Redis volume persists.

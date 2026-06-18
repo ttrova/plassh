@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -314,6 +315,89 @@ func TestNewActionClearsRedo(t *testing.T) {
 	m.dab()                           // new action -> redo stack cleared
 	if cmd := m.redo(1); cmd != nil { // redo should be a no-op now
 		t.Error("new action should have cleared the redo stack")
+	}
+}
+
+func TestLogin(t *testing.T) {
+	m := New(Deps{Width: 10, Height: 10, Grid: make([]byte, 100), AdminPassword: "secret"})
+	m.runCommand(parseCommand("login wrong"))
+	if m.admin {
+		t.Error("wrong password should not grant admin")
+	}
+	m.runCommand(parseCommand("login secret"))
+	if !m.admin {
+		t.Error("correct password should grant admin")
+	}
+}
+
+func TestLoginDisabledWithoutPassword(t *testing.T) {
+	m := New(Deps{Width: 10, Height: 10, Grid: make([]byte, 100)}) // no AdminPassword
+	m.runCommand(parseCommand("login anything"))
+	if m.admin {
+		t.Error("login must be disabled when no ADMIN_PASSWORD set")
+	}
+}
+
+func TestAdminGatingPerCommand(t *testing.T) {
+	m := New(Deps{Width: 10, Height: 10, Grid: make([]byte, 100),
+		AdminPassword: "pw", AdminCommands: map[string]bool{"clear": true}})
+	m.grid[0] = 4
+	m.runCommand(parseCommand("clear")) // gated, not admin
+	if m.grid[0] != 4 {
+		t.Error("non-admin should not run admin-gated /clear")
+	}
+	m.runCommand(parseCommand("login pw"))
+	m.runCommand(parseCommand("clear"))
+	if m.grid[0] != 0 {
+		t.Error("admin should run /clear")
+	}
+}
+
+func TestAdminAllExemptsLoginAndHelp(t *testing.T) {
+	m := New(Deps{Width: 10, Height: 10, Grid: make([]byte, 100),
+		AdminPassword: "pw", AdminAll: true})
+	m.width, m.height = 80, 24
+	m.runCommand(parseCommand("tp 2 2")) // gated by '*', not admin
+	if m.cursorX == 2 {
+		t.Error("non-admin should not run /tp when AdminAll")
+	}
+	m.runCommand(parseCommand("help")) // never gated
+	if !m.showHelp {
+		t.Error("/help must work for non-admin even with AdminAll")
+	}
+	m.runCommand(parseCommand("login pw")) // never gated
+	if !m.admin {
+		t.Error("/login must work for non-admin even with AdminAll")
+	}
+}
+
+func TestPaintCooldown(t *testing.T) {
+	m := newTestModel()
+	m.cooldown = time.Second
+	m.lastPaint = time.Now()
+	m.cursorX, m.cursorY = 1, 1
+
+	m.dab() // within cooldown -> blocked
+	if m.grid[1*m.canvasW+1] != 0 {
+		t.Error("paint within cooldown should be blocked")
+	}
+
+	m.lastPaint = time.Now().Add(-2 * time.Second) // cooldown elapsed
+	m.dab()
+	if m.grid[1*m.canvasW+1] != 1 {
+		t.Error("paint after cooldown should be allowed")
+	}
+}
+
+func TestAdminExemptFromCooldown(t *testing.T) {
+	m := newTestModel()
+	m.cooldown = time.Hour
+	m.lastPaint = time.Now()
+	m.admin = true
+	m.cursorX, m.cursorY = 2, 2
+	m.dab()
+	if m.grid[2*m.canvasW+2] != 1 {
+		t.Error("admin should be exempt from cooldown")
 	}
 }
 

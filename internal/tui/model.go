@@ -75,7 +75,12 @@ type Deps struct {
 	Announcer Announcer
 	Pixels    <-chan PixelUpdateMsg
 	Presence  <-chan presenceEvent
-	Disabled  map[string]bool // disabled slash-command names
+	Disabled  map[string]bool // hard-disabled slash-command names
+
+	AdminPassword string
+	AdminCommands map[string]bool // commands requiring admin
+	AdminAll      bool            // every command requires admin
+	Cooldown      time.Duration   // min delay between paint actions (0 = off)
 }
 
 // Model is the Bubble Tea model for one session.
@@ -101,6 +106,13 @@ type Model struct {
 	undoStack    []action
 	redoStack    []action
 	disabled     map[string]bool
+
+	admin         bool
+	adminPassword string
+	adminCommands map[string]bool
+	adminAll      bool
+	cooldown      time.Duration
+	lastPaint     time.Time
 
 	width, height int // terminal size in cells
 	remotes       map[string]remote
@@ -129,6 +141,10 @@ func New(d Deps) Model {
 	if disabled == nil {
 		disabled = make(map[string]bool)
 	}
+	adminCommands := d.AdminCommands
+	if adminCommands == nil {
+		adminCommands = make(map[string]bool)
+	}
 	return Model{
 		ctx:           ctx,
 		canvasW:       d.Width,
@@ -141,6 +157,10 @@ func New(d Deps) Model {
 		renderer:      renderer,
 		styler:        render.NewCellStyler(renderer),
 		disabled:      disabled,
+		adminPassword: d.AdminPassword,
+		adminCommands: adminCommands,
+		adminAll:      d.AdminAll,
+		cooldown:      d.Cooldown,
 		painter:       d.Painter,
 		announcer:     d.Announcer,
 		pixels:        d.Pixels,
@@ -250,8 +270,10 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 		m.drawing = !m.drawing
 		if m.drawing {
 			m.stroke = nil
-			if w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &m.stroke); ok {
-				return *m, m.flush([]write{w})
+			if m.allowPaint() {
+				if w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &m.stroke); ok {
+					return *m, m.flush([]write{w})
+				}
 			}
 			return *m, nil
 		}
@@ -284,7 +306,7 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 func (m *Model) afterMove() tea.Cmd {
 	m.recenter()
 	cmds := []tea.Cmd{m.announce()}
-	if m.drawing {
+	if m.drawing && m.allowPaint() {
 		if w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &m.stroke); ok {
 			cmds = append(cmds, m.flush([]write{w}))
 		}
@@ -294,6 +316,10 @@ func (m *Model) afterMove() tea.Cmd {
 
 // dab paints a single pixel at the cursor as its own undo action.
 func (m *Model) dab() tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	var act action
 	w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &act)
 	if !ok {
@@ -397,11 +423,21 @@ const (
 // runCommand executes a parsed command, sets a status message, and returns any
 // Redis writes / presence updates it produced.
 func (m *Model) runCommand(c command) tea.Cmd {
-	if c.kind != cmdUnknown && m.disabled[c.name] {
+	if c.kind == cmdUnknown {
+		m.statusMsg = c.err
+		return nil
+	}
+	if m.disabled[c.name] {
 		m.statusMsg = "/" + c.name + " is disabled"
 		return nil
 	}
+	if m.requiresAdmin(c.name) && !m.admin {
+		m.statusMsg = "/" + c.name + " requires admin — use /login"
+		return nil
+	}
 	switch c.kind {
+	case cmdLogin:
+		return m.login(c.arg)
 	case cmdTP:
 		m.cursorX = clampInt(c.x, 0, m.canvasW-1)
 		m.cursorY = clampInt(c.y, 0, m.canvasH-1)
@@ -426,9 +462,46 @@ func (m *Model) runCommand(c command) tea.Cmd {
 		m.showHelp = true
 		return nil
 	default:
-		m.statusMsg = c.err
 		return nil
 	}
+}
+
+// requiresAdmin reports whether a command needs admin privileges. /login and
+// /help are never gated (login would be a chicken-and-egg).
+func (m Model) requiresAdmin(name string) bool {
+	if name == "login" || name == "help" {
+		return false
+	}
+	return m.adminAll || m.adminCommands[name]
+}
+
+// login grants admin if the password matches ADMIN_PASSWORD.
+func (m *Model) login(pw string) tea.Cmd {
+	switch {
+	case m.adminPassword == "":
+		m.statusMsg = "admin login is disabled"
+	case pw == m.adminPassword:
+		m.admin = true
+		m.statusMsg = "logged in as admin"
+	default:
+		m.statusMsg = "wrong password"
+	}
+	return nil
+}
+
+// allowPaint enforces the paint cooldown. Admins and a zero cooldown are always
+// allowed; otherwise it permits one paint per cooldown window and records the
+// time when it allows one.
+func (m *Model) allowPaint() bool {
+	if m.admin || m.cooldown <= 0 {
+		return true
+	}
+	now := time.Now()
+	if now.Sub(m.lastPaint) < m.cooldown {
+		return false
+	}
+	m.lastPaint = now
+	return true
 }
 
 // commitPaint records a completed paint action and returns the flush command.
@@ -441,6 +514,10 @@ func (m *Model) commitPaint(act action, ws []write, msg string) tea.Cmd {
 // drawCircle paints a filled disk of the given radius centered on the cursor in
 // the current color, recorded as a single undo action. Radius is capped.
 func (m *Model) drawCircle(size int) tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	if size > maxCircleRadius {
 		size = maxCircleRadius
 	}
@@ -464,6 +541,10 @@ func (m *Model) drawCircle(size int) tea.Cmd {
 // fillRect paints the rectangle spanned by the two corners in the current color,
 // as one undo action.
 func (m *Model) fillRect(x1, y1, x2, y2 int) tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	x1, x2 = clampInt(min(x1, x2), 0, m.canvasW-1), clampInt(max(x1, x2), 0, m.canvasW-1)
 	y1, y2 = clampInt(min(y1, y2), 0, m.canvasH-1), clampInt(max(y1, y2), 0, m.canvasH-1)
 	var act action
@@ -481,6 +562,10 @@ func (m *Model) fillRect(x1, y1, x2, y2 int) tea.Cmd {
 // drawLine paints a Bresenham line between the two points in the current color,
 // as one undo action.
 func (m *Model) drawLine(x1, y1, x2, y2 int) tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	x1, y1 = clampInt(x1, 0, m.canvasW-1), clampInt(y1, 0, m.canvasH-1)
 	x2, y2 = clampInt(x2, 0, m.canvasW-1), clampInt(y2, 0, m.canvasH-1)
 	dx, dy := abs(x2-x1), -abs(y2-y1)
@@ -510,6 +595,10 @@ func (m *Model) drawLine(x1, y1, x2, y2 int) tea.Cmd {
 
 // clear resets every painted pixel to black, as one undo action.
 func (m *Model) clear() tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	var act action
 	var ws []write
 	for y := 0; y < m.canvasH; y++ {
@@ -528,6 +617,10 @@ func (m *Model) clear() tea.Cmd {
 // flood fills the contiguous region of same-colored pixels connected to the
 // cursor with the current color, as one undo action (4-directional).
 func (m *Model) flood() tea.Cmd {
+	if !m.allowPaint() {
+		m.statusMsg = "slow down"
+		return nil
+	}
 	if !m.inBounds(m.cursorX, m.cursorY) {
 		return nil
 	}
@@ -754,15 +847,23 @@ func (m Model) helpView() string {
 		{"/clear", "clear the whole canvas"},
 		{"/undo [n]", "undo your last n actions (default 1, max 10)"},
 		{"/redo [n]", "redo undone actions (default 1, max 10)"},
+		{"/login <pw>", "gain admin access"},
 		{"/help", "this help"},
 	}
 	var b strings.Builder
-	b.WriteString("Commands\n\n")
+	title := "Commands"
+	if m.admin {
+		title += "  [admin]"
+	}
+	b.WriteString(title + "\n\n")
 	for _, e := range entries {
 		name := strings.TrimPrefix(strings.Fields(e.usage)[0], "/")
 		line := fmt.Sprintf("  %-20s %s", e.usage, e.desc)
-		if m.disabled[name] {
+		switch {
+		case m.disabled[name]:
 			line += "  (disabled)"
+		case m.requiresAdmin(name) && !m.admin:
+			line += "  (admin only)"
 		}
 		b.WriteString(line + "\n")
 	}
@@ -787,6 +888,9 @@ func (m Model) statusBar() string {
 	draw := ""
 	if m.drawing {
 		draw = " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(2)).Bold(true).Render("DRAW")
+	}
+	if m.admin {
+		draw += " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(3)).Bold(true).Render("ADMIN")
 	}
 	tail := "1-8/Tab color · Space dab · d draw · / cmd · q quit"
 	if m.statusMsg != "" {
