@@ -14,9 +14,14 @@ import (
 	"plassh/internal/render"
 )
 
-// Painter writes a pixel to shared storage (satisfied by *canvas.Canvas).
+// PixelWrite is a single pixel to persist. Exported so the wiring layer can
+// build batches for the Painter.
+type PixelWrite struct{ X, Y, Color int }
+
+// Painter persists pixel writes to shared storage, broadcasting a multi-pixel
+// write as a single batch (satisfied by an adapter over *canvas.Canvas).
 type Painter interface {
-	SetPixel(ctx context.Context, x, y, color int) error
+	SetPixels(ctx context.Context, writes []PixelWrite) error
 }
 
 // Announcer publishes and refreshes this session's presence (satisfied by *presence.Presence).
@@ -24,6 +29,10 @@ type Announcer interface {
 	Touch(ctx context.Context, u presence.Update) error
 	Publish(ctx context.Context, u presence.Update) error
 }
+
+// PixelBatch is a group of pixel updates delivered as a single message, so a
+// bulk broadcast is applied in one frame instead of one-per-frame.
+type PixelBatch []PixelUpdateMsg
 
 // Messages delivered into the program from external sources.
 type (
@@ -74,7 +83,7 @@ type Deps struct {
 	ID        string
 	Painter   Painter
 	Announcer Announcer
-	Pixels    <-chan PixelUpdateMsg
+	Pixels    <-chan PixelBatch
 	Presence  <-chan presenceEvent
 	Disabled  map[string]bool // hard-disabled slash-command names
 
@@ -122,7 +131,7 @@ type Model struct {
 	styler    *render.CellStyler
 	painter   Painter
 	announcer Announcer
-	pixels    <-chan PixelUpdateMsg
+	pixels    <-chan PixelBatch
 	presence  <-chan presenceEvent
 }
 
@@ -197,6 +206,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PixelUpdateMsg:
 		if m.inBounds(msg.X, msg.Y) {
 			m.grid[msg.Y*m.canvasW+msg.X] = byte(msg.Color)
+		}
+		return m, waitPixel(m.pixels)
+
+	case PixelBatch:
+		for _, u := range msg {
+			if m.inBounds(u.X, u.Y) {
+				m.grid[u.Y*m.canvasW+u.X] = byte(u.Color)
+			}
 		}
 		return m, waitPixel(m.pixels)
 
@@ -365,17 +382,19 @@ func (m *Model) pushUndo(act action) {
 	m.redoStack = nil
 }
 
-// flush returns a single command that writes all pending pixels to Redis in one
-// goroutine, so a large /circle or /undo is one command rather than thousands.
+// flush returns a single command that persists all pending pixels as one batch
+// (one pipeline + one broadcast), so a bulk op is not thousands of messages.
 func (m *Model) flush(ws []write) tea.Cmd {
 	if m.painter == nil || len(ws) == 0 {
 		return nil
 	}
 	painter, ctx := m.painter, m.ctx
+	writes := make([]PixelWrite, len(ws))
+	for i, w := range ws {
+		writes[i] = PixelWrite{X: w.x, Y: w.y, Color: w.c}
+	}
 	return func() tea.Msg {
-		for _, w := range ws {
-			_ = painter.SetPixel(ctx, w.x, w.y, w.c)
-		}
+		_ = painter.SetPixels(ctx, writes)
 		return nil
 	}
 }
@@ -937,16 +956,16 @@ func (m Model) statusBar() string {
 	)
 }
 
-func waitPixel(ch <-chan PixelUpdateMsg) tea.Cmd {
+func waitPixel(ch <-chan PixelBatch) tea.Cmd {
 	if ch == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		u, ok := <-ch
+		batch, ok := <-ch
 		if !ok {
 			return nil
 		}
-		return u
+		return batch
 	}
 }
 

@@ -486,6 +486,16 @@ func TestPixelUpdateMsgAppliesToGrid(t *testing.T) {
 	}
 }
 
+func TestPixelBatchAppliesAll(t *testing.T) {
+	m := newTestModel()
+	batch := PixelBatch{{X: 0, Y: 0, Color: 1}, {X: 1, Y: 0, Color: 2}, {X: 9, Y: 9, Color: 7}}
+	updated, _ := m.Update(batch)
+	m = updated.(Model)
+	if m.grid[0] != 1 || m.grid[1] != 2 || m.grid[9*m.canvasW+9] != 7 {
+		t.Errorf("batch not fully applied: %d %d %d", m.grid[0], m.grid[1], m.grid[9*m.canvasW+9])
+	}
+}
+
 func TestPresenceUpdateAndGone(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(PresenceUpdateMsg{ID: "other", X: 5, Y: 5, Color: 2, Name: "x"})

@@ -58,7 +58,7 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 			Grid:          grid,
 			Name:          name,
 			ID:            id,
-			Painter:       cv,
+			Painter:       canvasPainter{cv},
 			Announcer:     pr,
 			Pixels:        pixCh,
 			Presence:      presCh,
@@ -81,20 +81,36 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 	}
 }
 
-func bridgePixels(ctx context.Context, in <-chan canvas.PixelUpdate) <-chan tui.PixelUpdateMsg {
-	out := make(chan tui.PixelUpdateMsg, 64)
+// canvasPainter adapts *canvas.Canvas to the tui.Painter interface, converting
+// tui pixel writes into canvas updates for a single batched persist+broadcast.
+type canvasPainter struct{ cv *canvas.Canvas }
+
+func (p canvasPainter) SetPixels(ctx context.Context, writes []tui.PixelWrite) error {
+	ups := make([]canvas.PixelUpdate, len(writes))
+	for i, w := range writes {
+		ups[i] = canvas.PixelUpdate{X: w.X, Y: w.Y, Color: w.Color}
+	}
+	return p.cv.SetPixels(ctx, ups)
+}
+
+func bridgePixels(ctx context.Context, in <-chan []canvas.PixelUpdate) <-chan tui.PixelBatch {
+	out := make(chan tui.PixelBatch, 64)
 	go func() {
 		defer close(out)
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case u, ok := <-in:
+			case batch, ok := <-in:
 				if !ok {
 					return
 				}
+				b := make(tui.PixelBatch, len(batch))
+				for i, u := range batch {
+					b[i] = tui.PixelUpdateMsg{X: u.X, Y: u.Y, Color: u.Color}
+				}
 				select {
-				case out <- tui.PixelUpdateMsg{X: u.X, Y: u.Y, Color: u.Color}:
+				case out <- b:
 				case <-ctx.Done():
 					return
 				}

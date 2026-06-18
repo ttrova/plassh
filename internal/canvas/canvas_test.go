@@ -77,11 +77,46 @@ func TestSetPixelPublishes(t *testing.T) {
 	}
 
 	select {
-	case u := <-updates:
-		if (u != PixelUpdate{X: 3, Y: 1, Color: 7}) {
-			t.Errorf("got %+v", u)
+	case batch := <-updates:
+		if len(batch) != 1 || batch[0] != (PixelUpdate{X: 3, Y: 1, Color: 7}) {
+			t.Errorf("got %+v", batch)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for update")
+	}
+}
+
+func TestSetPixelsBatchPublishes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rdb := newTestClient(t)
+	c := New(rdb, 4, 3)
+	if err := c.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	updates := c.Subscribe(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	ups := []PixelUpdate{{X: 0, Y: 0, Color: 1}, {X: 1, Y: 0, Color: 2}, {X: 2, Y: 0, Color: 3}}
+	if err := c.SetPixels(ctx, ups); err != nil {
+		t.Fatalf("SetPixels: %v", err)
+	}
+
+	select {
+	case batch := <-updates:
+		if len(batch) != 3 {
+			t.Fatalf("got %d updates in one message, want 3", len(batch))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for batch")
+	}
+
+	grid, err := c.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if grid[0] != 1 || grid[1] != 2 || grid[2] != 3 {
+		t.Errorf("batch not persisted: %v", grid[:3])
 	}
 }

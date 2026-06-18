@@ -14,8 +14,24 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out != in {
-		t.Errorf("round trip: got %+v, want %+v", out, in)
+	if len(out) != 1 || out[0] != in {
+		t.Errorf("round trip: got %+v, want [%+v]", out, in)
+	}
+}
+
+func TestEncodeDecodeBatch(t *testing.T) {
+	in := []PixelUpdate{{X: 1, Y: 2, Color: 3}, {X: 4, Y: 5, Color: 6}, {X: 7, Y: 8, Color: 0}}
+	out, err := Decode(EncodeBatch(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("got %d updates, want %d", len(out), len(in))
+	}
+	for i := range in {
+		if out[i] != in[i] {
+			t.Errorf("update %d: got %+v, want %+v", i, out[i], in[i])
+		}
 	}
 }
 

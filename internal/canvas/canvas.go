@@ -55,10 +55,31 @@ func (c *Canvas) SetPixel(ctx context.Context, x, y, color int) error {
 	return c.rdb.Publish(ctx, updateChannel, PixelUpdate{X: x, Y: y, Color: color}.Encode()).Err()
 }
 
-// Subscribe returns a channel of decoded pixel updates. The backing goroutine
-// stops and the channel closes when ctx is cancelled.
-func (c *Canvas) Subscribe(ctx context.Context) <-chan PixelUpdate {
-	out := make(chan PixelUpdate, 64)
+// SetPixels writes many pixels to Redis with one pipeline and broadcasts them as
+// a single batch message — so a bulk operation (clear/fill/circle/flood/line) is
+// one round-trip and one pub/sub message instead of thousands.
+func (c *Canvas) SetPixels(ctx context.Context, ups []PixelUpdate) error {
+	if len(ups) == 0 {
+		return nil
+	}
+	if len(ups) == 1 {
+		return c.SetPixel(ctx, ups[0].X, ups[0].Y, ups[0].Color)
+	}
+	pipe := c.rdb.Pipeline()
+	for _, u := range ups {
+		offset := int64(Index(u.X, u.Y, c.width))
+		pipe.SetRange(ctx, gridKey, offset, string([]byte{byte(u.Color)}))
+	}
+	pipe.Publish(ctx, updateChannel, EncodeBatch(ups))
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// Subscribe returns a channel of decoded pixel-update batches (a single paint is
+// a batch of one). The backing goroutine stops and the channel closes when ctx
+// is cancelled.
+func (c *Canvas) Subscribe(ctx context.Context) <-chan []PixelUpdate {
+	out := make(chan []PixelUpdate, 64)
 	pubsub := c.rdb.Subscribe(ctx, updateChannel)
 	go func() {
 		defer close(out)
@@ -72,13 +93,13 @@ func (c *Canvas) Subscribe(ctx context.Context) <-chan PixelUpdate {
 				if !ok {
 					return
 				}
-				u, err := Decode(msg.Payload)
+				ups, err := Decode(msg.Payload)
 				if err != nil {
 					log.Printf("canvas: bad update payload %q: %v", msg.Payload, err)
 					continue
 				}
 				select {
-				case out <- u:
+				case out <- ups:
 				case <-ctx.Done():
 					return
 				}
