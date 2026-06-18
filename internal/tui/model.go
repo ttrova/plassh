@@ -53,6 +53,7 @@ type presenceEvent struct {
 // dependencies are optional in tests (nil-safe).
 type Deps struct {
 	Ctx       context.Context
+	Renderer  *lipgloss.Renderer
 	Width     int
 	Height    int
 	Grid      []byte
@@ -81,6 +82,7 @@ type Model struct {
 	width, height int // terminal size in cells
 	remotes       map[string]remote
 
+	renderer  *lipgloss.Renderer
 	painter   Painter
 	announcer Announcer
 	pixels    <-chan PixelUpdateMsg
@@ -95,6 +97,10 @@ func New(d Deps) Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	renderer := d.Renderer
+	if renderer == nil {
+		renderer = lipgloss.DefaultRenderer()
+	}
 	return Model{
 		ctx:           ctx,
 		canvasW:       d.Width,
@@ -104,6 +110,7 @@ func New(d Deps) Model {
 		name:          d.Name,
 		selectedColor: 1, // start on red (index 1); black-on-black is invisible
 		remotes:       make(map[string]remote),
+		renderer:      renderer,
 		painter:       d.Painter,
 		announcer:     d.Announcer,
 		pixels:        d.Pixels,
@@ -296,7 +303,8 @@ func (m Model) View() string {
 	ph := render.VisiblePixelHeight(m.height)
 
 	canvas := render.Canvas(render.View{
-		Grid: m.grid, Width: m.canvasW, Height: m.canvasH,
+		Renderer: m.renderer,
+		Grid:     m.grid, Width: m.canvasW, Height: m.canvasH,
 		CamX: m.camX, CamY: m.camY, PixelCols: pw, PixelRows: ph,
 		CursorX: m.cursorX, CursorY: m.cursorY, SelectedColor: m.selectedColor,
 		Remotes: m.remoteCursors(),
@@ -312,7 +320,7 @@ func (m Model) View() string {
 		}
 		return scrollColor
 	}
-	style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).
+	style := m.renderer.NewStyle().Border(lipgloss.NormalBorder()).
 		BorderTopForeground(sideColor(m.camY == 0)).
 		BorderBottomForeground(sideColor(m.camY+ph >= m.canvasH)).
 		BorderLeftForeground(sideColor(m.camX == 0)).
@@ -330,7 +338,7 @@ func (m Model) remoteCursors() []render.RemoteCursor {
 }
 
 func (m Model) statusBar() string {
-	swatch := lipgloss.NewStyle().Foreground(render.ColorAt(m.selectedColor)).Render("█")
+	swatch := m.renderer.NewStyle().Foreground(render.ColorAt(m.selectedColor)).Render("█")
 	return fmt.Sprintf(
 		"You: %s │ Color: %s %s (%d/8) │ Pos: %d,%d │ Users: %d │ %s",
 		m.name, swatch, render.ColorName(m.selectedColor), m.selectedColor+1,

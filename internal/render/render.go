@@ -15,6 +15,11 @@ type RemoteCursor struct {
 
 // View is everything Canvas needs to render the visible viewport.
 type View struct {
+	// Renderer is the per-session lipgloss renderer (from bubbletea.MakeRenderer)
+	// that carries the client's color profile. If nil, the global default
+	// renderer is used (which reports no color outside a TTY).
+	Renderer *lipgloss.Renderer
+
 	Grid          []byte
 	Width         int
 	Height        int
@@ -31,6 +36,10 @@ type View struct {
 // Canvas renders the visible region as a string of styled cells, one terminal
 // row per two pixel rows. It does not include border or status bar.
 func Canvas(v View) string {
+	r := v.Renderer
+	if r == nil {
+		r = lipgloss.DefaultRenderer()
+	}
 	cellRows := v.PixelRows / 2
 	var b strings.Builder
 	for row := 0; row < cellRows; row++ {
@@ -49,7 +58,7 @@ func Canvas(v View) string {
 			remoteHere, remoteOnTop, remoteColor := v.remoteAt(px, topY, botY)
 
 			spec := DecideCell(top, bottom, ownHere, v.SelectedColor, remoteHere, remoteOnTop, remoteColor)
-			style := lipgloss.NewStyle().
+			style := r.NewStyle().
 				Foreground(ColorAt(spec.FG)).
 				Background(ColorAt(spec.BG))
 			b.WriteString(style.Render(spec.Glyph))

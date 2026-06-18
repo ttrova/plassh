@@ -52,6 +52,7 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 
 		m := tui.New(tui.Deps{
 			Ctx:       ctx,
+			Renderer:  bm.MakeRenderer(s), // per-session color profile from the client's TERM
 			Width:     cfg.Width,
 			Height:    cfg.Height,
 			Grid:      grid,
