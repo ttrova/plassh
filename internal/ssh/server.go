@@ -77,7 +77,7 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 			_ = pr.Publish(bg, presence.Update{ID: id, Gone: true})
 		}()
 
-		return m, []tea.ProgramOption{tea.WithAltScreen()}
+		return m, []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
 	}
 }
 

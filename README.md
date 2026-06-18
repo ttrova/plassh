@@ -26,6 +26,9 @@ users. No password or key is required.
 | `/`                          | Open the command line (see below)       |
 | `q` / `Ctrl+C`               | Quit                                    |
 
+**Mouse:** scroll the wheel to change color; **right-click** paints the top pixel
+of a cell, **left-click** paints the bottom pixel (and moves the cursor there).
+
 ### Commands
 
 Press `/` to open a command line in the status bar, type, then **Enter** to run

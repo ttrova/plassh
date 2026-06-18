@@ -422,6 +422,57 @@ func TestAdminExemptFromCooldown(t *testing.T) {
 	}
 }
 
+func TestMouseWheelChangesColor(t *testing.T) {
+	m := newTestModel()
+	m.selectedColor = 3
+	updated, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	m = updated.(Model)
+	if m.selectedColor != 4 {
+		t.Errorf("wheel down: selectedColor = %d, want 4", m.selectedColor)
+	}
+	updated, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	m = updated.(Model)
+	if m.selectedColor != 3 {
+		t.Errorf("wheel up: selectedColor = %d, want 3", m.selectedColor)
+	}
+}
+
+func TestMouseClickPaintsTopAndBottom(t *testing.T) {
+	m := newTestModel() // canvas 10x10
+	m.width, m.height = 80, 24
+	m.selectedColor = 6
+
+	// Cell at screen (col=1+2, row=2+1) -> canvas cell col 2, cell row 1.
+	// Right click -> top pixel (2, 2); left click -> bottom pixel (2, 3).
+	updated, _ := m.Update(tea.MouseMsg{X: 3, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonRight})
+	m = updated.(Model)
+	if m.grid[2*m.canvasW+2] != 6 {
+		t.Errorf("right click should paint top pixel (2,2), got %d", m.grid[2*m.canvasW+2])
+	}
+	if m.cursorX != 2 || m.cursorY != 2 {
+		t.Errorf("cursor should move to clicked pixel, got %d,%d", m.cursorX, m.cursorY)
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{X: 3, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(Model)
+	if m.grid[3*m.canvasW+2] != 6 {
+		t.Errorf("left click should paint bottom pixel (2,3), got %d", m.grid[3*m.canvasW+2])
+	}
+}
+
+func TestMouseClickOutsideCanvasIgnored(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	// Click on the header row (Y=0) is outside the canvas content.
+	updated, _ := m.Update(tea.MouseMsg{X: 5, Y: 0, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(Model)
+	for _, b := range m.grid {
+		if b != 0 {
+			t.Fatal("click outside canvas should not paint")
+		}
+	}
+}
+
 func TestViewportClampedToCanvas(t *testing.T) {
 	m := newTestModel() // canvas 10x10
 

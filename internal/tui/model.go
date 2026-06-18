@@ -203,6 +203,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case PixelUpdateMsg:
 		if m.inBounds(msg.X, msg.Y) {
 			m.grid[msg.Y*m.canvasW+msg.X] = byte(msg.Color)
@@ -344,14 +347,80 @@ func (m *Model) afterMove() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// Screen offsets of the canvas content within View(): one header row plus the
+// top border above it, and the left border to its left.
+const (
+	canvasTopOffset  = 2 // header (1) + top border (1)
+	canvasLeftOffset = 1 // left border
+)
+
+// handleMouse maps mouse input to actions: the wheel changes color, and left /
+// right click paints the bottom / top pixel of the clicked cell.
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.commandMode || m.showHelp {
+		return *m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelDown:
+		m.statusMsg = ""
+		m.selectedColor = render.NextColor(m.selectedColor)
+		return *m, m.announce()
+	case tea.MouseButtonWheelUp:
+		m.statusMsg = ""
+		m.selectedColor = render.PrevColor(m.selectedColor)
+		return *m, m.announce()
+	case tea.MouseButtonLeft, tea.MouseButtonRight:
+		if msg.Action != tea.MouseActionPress {
+			return *m, nil
+		}
+		top := msg.Button == tea.MouseButtonRight // right = top pixel, left = bottom
+		px, py, ok := m.cellAtScreen(msg.X, msg.Y, top)
+		if !ok {
+			return *m, nil
+		}
+		m.statusMsg = ""
+		m.cursorX, m.cursorY = px, py
+		m.recenter()
+		return *m, tea.Batch(m.announce(), m.dabAt(px, py))
+	}
+	return *m, nil
+}
+
+// cellAtScreen maps a terminal cell position to a canvas pixel. top selects the
+// upper pixel of the cell (else the lower). ok is false when the click is
+// outside the canvas content area.
+func (m Model) cellAtScreen(sx, sy int, top bool) (px, py int, ok bool) {
+	pw, ph := m.viewportPixels()
+	col := sx - canvasLeftOffset
+	row := sy - canvasTopOffset
+	if col < 0 || col >= pw || row < 0 || row >= ph/2 {
+		return 0, 0, false
+	}
+	px = m.camX + col
+	py = m.camY + row*2
+	if !top {
+		py++
+	}
+	if !m.inBounds(px, py) {
+		return 0, 0, false
+	}
+	return px, py, true
+}
+
 // dab paints a single pixel at the cursor as its own undo action.
 func (m *Model) dab() tea.Cmd {
+	return m.dabAt(m.cursorX, m.cursorY)
+}
+
+// dabAt paints a single pixel at (x, y) as its own undo action, subject to the
+// paint cooldown.
+func (m *Model) dabAt(x, y int) tea.Cmd {
 	if !m.allowPaint() {
 		m.statusMsg = "slow down"
 		return nil
 	}
 	var act action
-	w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &act)
+	w, ok := m.stage(x, y, m.selectedColor, &act)
 	if !ok {
 		return nil
 	}
@@ -944,7 +1013,7 @@ func (m Model) statusBar() string {
 			draw += " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(2)).Render("ready")
 		}
 	}
-	tail := "1-8/Tab color · Space dab · d draw · / cmd · q quit"
+	tail := "1-8/wheel color · Space/click dab · d draw · / cmd · q quit"
 	if m.statusMsg != "" {
 		tail = m.statusMsg
 	}

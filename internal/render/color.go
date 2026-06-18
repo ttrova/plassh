@@ -34,3 +34,8 @@ func ColorAt(c int) lipgloss.Color {
 func NextColor(c int) int {
 	return (c + 1) % NumColors
 }
+
+// PrevColor returns the previous palette index, wrapping from 0 back to 7.
+func PrevColor(c int) int {
+	return (c - 1 + NumColors) % NumColors
+}
