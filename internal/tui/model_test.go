@@ -71,6 +71,44 @@ func TestPaintUpdatesLocalGrid(t *testing.T) {
 	}
 }
 
+func TestDrawModeTrail(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.selectedColor = 3
+
+	// 'd' enables draw mode and paints the starting pixel (0,0).
+	updated, _ := m.Update(keyMsg("d"))
+	m = updated.(Model)
+	if !m.drawing {
+		t.Fatal("expected draw mode on after 'd'")
+	}
+	if m.grid[0] != 3 {
+		t.Errorf("start pixel (0,0) = %d, want 3", m.grid[0])
+	}
+
+	// Moving right while drawing paints the destination pixel (1,0).
+	updated, _ = m.Update(keyMsg("l"))
+	m = updated.(Model)
+	if m.cursorX != 1 {
+		t.Fatalf("cursorX = %d, want 1", m.cursorX)
+	}
+	if m.grid[m.cursorY*m.canvasW+m.cursorX] != 3 {
+		t.Errorf("trail pixel (1,0) not painted")
+	}
+
+	// 'd' again disables draw mode; further movement must NOT paint.
+	updated, _ = m.Update(keyMsg("d"))
+	m = updated.(Model)
+	if m.drawing {
+		t.Fatal("expected draw mode off after second 'd'")
+	}
+	updated, _ = m.Update(keyMsg("l"))
+	m = updated.(Model)
+	if m.grid[m.cursorY*m.canvasW+m.cursorX] != 0 {
+		t.Errorf("pixel (2,0) painted while draw mode off")
+	}
+}
+
 func TestPixelUpdateMsgAppliesToGrid(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(PixelUpdateMsg{X: 1, Y: 1, Color: 6})

@@ -78,6 +78,7 @@ type Model struct {
 	cursorX, cursorY int
 	camX, camY       int
 	selectedColor    int
+	drawing          bool // continuous draw mode: movement paints a trail
 
 	width, height int // terminal size in cells
 	remotes       map[string]remote
@@ -188,8 +189,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleRune(msg.Runes)
 	}
 	if moved {
-		m.recenter()
-		cmd := m.announce()
+		cmd := m.afterMove()
 		return *m, cmd
 	}
 	return *m, nil
@@ -204,6 +204,15 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 	switch r {
 	case 'q':
 		return *m, tea.Quit
+	case 'd':
+		// Toggle continuous draw mode. Turning it on drops a pixel at the cursor
+		// so a stroke starts where you are.
+		m.drawing = !m.drawing
+		if m.drawing {
+			cmd := m.paint()
+			return *m, cmd
+		}
+		return *m, nil
 	case 'h':
 		m.cursorX, moved = clampMove(m.cursorX-1, m.canvasW)
 	case 'l':
@@ -218,11 +227,22 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 		return *m, cmd
 	}
 	if moved {
-		m.recenter()
-		cmd := m.announce()
+		cmd := m.afterMove()
 		return *m, cmd
 	}
 	return *m, nil
+}
+
+// afterMove recenters the camera, announces the new cursor position, and — when
+// draw mode is active — paints the pixel the cursor just moved onto, so moving
+// lays down a continuous trail.
+func (m *Model) afterMove() tea.Cmd {
+	m.recenter()
+	cmds := []tea.Cmd{m.announce()}
+	if m.drawing {
+		cmds = append(cmds, m.paint())
+	}
+	return tea.Batch(cmds...)
 }
 
 // paint applies the current color at the cursor optimistically and writes through.
@@ -339,11 +359,15 @@ func (m Model) remoteCursors() []render.RemoteCursor {
 
 func (m Model) statusBar() string {
 	swatch := m.renderer.NewStyle().Foreground(render.ColorAt(m.selectedColor)).Render("█")
+	draw := ""
+	if m.drawing {
+		draw = " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(2)).Bold(true).Render("DRAW")
+	}
 	return fmt.Sprintf(
-		"You: %s │ Color: %s %s (%d/8) │ Pos: %d,%d │ Users: %d │ %s",
+		"You: %s │ Color: %s %s (%d/8) │ Pos: %d,%d │ Users: %d%s │ %s",
 		m.name, swatch, render.ColorName(m.selectedColor), m.selectedColor+1,
-		m.cursorX, m.cursorY, len(m.remotes)+1,
-		"1-8/Tab color · Space paint · hjkl move · q quit",
+		m.cursorX, m.cursorY, len(m.remotes)+1, draw,
+		"1-8/Tab color · Space dab · d draw · hjkl move · q quit",
 	)
 }
 

@@ -57,7 +57,7 @@ func Canvas(v View) string {
 
 			remoteHere, remoteOnTop, remoteColor := v.remoteAt(px, topY, botY)
 
-			spec := DecideCell(top, bottom, ownHere, v.SelectedColor, remoteHere, remoteOnTop, remoteColor)
+			spec := DecideCell(top, bottom, ownHere, ownTop, v.SelectedColor, remoteHere, remoteOnTop, remoteColor)
 			style := r.NewStyle().
 				Foreground(ColorAt(spec.FG)).
 				Background(ColorAt(spec.BG))

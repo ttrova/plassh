@@ -16,16 +16,19 @@ users. No password or key is required.
 
 ## Controls
 
-| Key                          | Action                |
-|------------------------------|-----------------------|
-| Arrow keys / `h` `j` `k` `l` | Move cursor           |
-| `Space`                      | Paint selected color  |
-| `1`–`8`                      | Select color          |
-| `Tab`                        | Cycle color           |
-| `q` / `Ctrl+C`               | Quit                  |
+| Key                          | Action                                  |
+|------------------------------|-----------------------------------------|
+| Arrow keys / `h` `j` `k` `l` | Move cursor                             |
+| `Space`                      | Paint one pixel at the cursor (a dab)   |
+| `d`                          | Toggle draw mode (paint while you move) |
+| `1`–`8`                      | Select color                            |
+| `Tab`                        | Cycle color                             |
+| `q` / `Ctrl+C`               | Quit                                    |
 
-Your cursor is a `+` in your selected color. Other users appear as a colored
-half-shade square (`🮎`/`🮏`) at their pixel.
+Your cursor — and every other user's — is a top/bottom half-shade square
+(`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**
+on (`d`), every cursor move lays down a pixel, so you can drag out lines and
+shapes; the status bar shows `DRAW` while it's active. Press `d` again to stop.
 
 ## Configuration
 

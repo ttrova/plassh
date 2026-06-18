@@ -28,9 +28,10 @@ func TestRenderPlacesOwnCursorGlyph(t *testing.T) {
 		CamX: 0, CamY: 0, PixelCols: 4, PixelRows: 4,
 		CursorX: 0, CursorY: 0, SelectedColor: 1,
 	}
+	// Cursor at (0,0) is the top pixel of its cell -> upper half-shade glyph.
 	out := Canvas(v)
-	if !strings.Contains(out, "+") {
-		t.Error("expected own-cursor glyph '+' in output")
+	if !strings.Contains(out, "🮎") {
+		t.Error("expected own-cursor top glyph 🮎 in output")
 	}
 }
 
