@@ -20,8 +20,8 @@ func TestCanvasEmitsColorWithRenderer(t *testing.T) {
 	grid := make([]byte, 16)
 	grid[0] = 1 // a red pixel at (0,0)
 	out := Canvas(View{
-		Renderer: r,
-		Grid:     grid, Width: 4, Height: 4,
+		Styler: NewCellStyler(r),
+		Grid:   grid, Width: 4, Height: 4,
 		PixelCols: 4, PixelRows: 4,
 		CursorX: 99, CursorY: 99, // own cursor off-canvas
 		SelectedColor: 1,

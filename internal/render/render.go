@@ -13,12 +13,44 @@ type RemoteCursor struct {
 	Color int
 }
 
+// CellStyler turns a CellSpec into its styled terminal string, caching the
+// result per spec. There are at most a few hundred distinct specs (4 glyphs ×
+// 8 foregrounds × 8 backgrounds), so after warm-up every cell is a map lookup
+// instead of an expensive lipgloss render — the difference between rebuilding
+// thousands of styles per frame and not.
+type CellStyler struct {
+	r     *lipgloss.Renderer
+	cache map[CellSpec]string
+}
+
+// NewCellStyler returns a styler bound to a per-session renderer (from
+// bubbletea.MakeRenderer, carrying the client's color profile). A nil renderer
+// falls back to the global default (which reports no color outside a TTY).
+func NewCellStyler(r *lipgloss.Renderer) *CellStyler {
+	if r == nil {
+		r = lipgloss.DefaultRenderer()
+	}
+	return &CellStyler{r: r, cache: make(map[CellSpec]string)}
+}
+
+// Style returns the styled string for spec, populating the cache on first use.
+func (s *CellStyler) Style(spec CellSpec) string {
+	if v, ok := s.cache[spec]; ok {
+		return v
+	}
+	out := s.r.NewStyle().
+		Foreground(ColorAt(spec.FG)).
+		Background(ColorAt(spec.BG)).
+		Render(spec.Glyph)
+	s.cache[spec] = out
+	return out
+}
+
 // View is everything Canvas needs to render the visible viewport.
 type View struct {
-	// Renderer is the per-session lipgloss renderer (from bubbletea.MakeRenderer)
-	// that carries the client's color profile. If nil, the global default
-	// renderer is used (which reports no color outside a TTY).
-	Renderer *lipgloss.Renderer
+	// Styler styles each cell and carries the client's color profile. If nil, a
+	// default styler is created per call (uncached across frames).
+	Styler *CellStyler
 
 	Grid          []byte
 	Width         int
@@ -36,9 +68,9 @@ type View struct {
 // Canvas renders the visible region as a string of styled cells, one terminal
 // row per two pixel rows. It does not include border or status bar.
 func Canvas(v View) string {
-	r := v.Renderer
-	if r == nil {
-		r = lipgloss.DefaultRenderer()
+	styler := v.Styler
+	if styler == nil {
+		styler = NewCellStyler(nil)
 	}
 	cellRows := v.PixelRows / 2
 	var b strings.Builder
@@ -58,10 +90,7 @@ func Canvas(v View) string {
 			remoteHere, remoteOnTop, remoteColor := v.remoteAt(px, topY, botY)
 
 			spec := DecideCell(top, bottom, ownHere, ownTop, v.SelectedColor, remoteHere, remoteOnTop, remoteColor)
-			style := r.NewStyle().
-				Foreground(ColorAt(spec.FG)).
-				Background(ColorAt(spec.BG))
-			b.WriteString(style.Render(spec.Glyph))
+			b.WriteString(styler.Style(spec))
 		}
 		if row < cellRows-1 {
 			b.WriteByte('\n')

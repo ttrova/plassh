@@ -71,6 +71,22 @@ func TestPaintUpdatesLocalGrid(t *testing.T) {
 	}
 }
 
+func TestViewportClampedToCanvas(t *testing.T) {
+	m := newTestModel() // canvas 10x10
+
+	// Terminal much larger than the canvas -> viewport capped at canvas size.
+	m.width, m.height = 200, 100
+	if pw, ph := m.viewportPixels(); pw != 10 || ph != 10 {
+		t.Errorf("large terminal: got %dx%d pixels, want 10x10", pw, ph)
+	}
+
+	// Terminal smaller than the canvas -> viewport follows the window.
+	m.width, m.height = 8, 6
+	if pw, ph := m.viewportPixels(); pw != 6 || ph != 6 {
+		t.Errorf("small terminal: got %dx%d pixels, want 6x6", pw, ph)
+	}
+}
+
 func TestDrawModeTrail(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 80, 24

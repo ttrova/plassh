@@ -84,6 +84,7 @@ type Model struct {
 	remotes       map[string]remote
 
 	renderer  *lipgloss.Renderer
+	styler    *render.CellStyler
 	painter   Painter
 	announcer Announcer
 	pixels    <-chan PixelUpdateMsg
@@ -112,6 +113,7 @@ func New(d Deps) Model {
 		selectedColor: 1, // start on red (index 1); black-on-black is invisible
 		remotes:       make(map[string]remote),
 		renderer:      renderer,
+		styler:        render.NewCellStyler(renderer),
 		painter:       d.Painter,
 		announcer:     d.Announcer,
 		pixels:        d.Pixels,
@@ -278,9 +280,24 @@ func (m Model) selfPresence() presence.Update {
 	return presence.Update{ID: m.id, X: m.cursorX, Y: m.cursorY, Color: m.selectedColor, Name: m.name}
 }
 
+// viewportPixels is the visible pixel area, never larger than the canvas itself.
+// When the terminal is bigger than the canvas the extra space stays outside the
+// border, so the border sits on the real canvas edge rather than the window edge.
+func (m Model) viewportPixels() (pw, ph int) {
+	pw = render.VisiblePixelWidth(m.width)
+	ph = render.VisiblePixelHeight(m.height)
+	if pw > m.canvasW {
+		pw = m.canvasW
+	}
+	evenH := m.canvasH + (m.canvasH & 1) // half-block cells are 2px tall
+	if ph > evenH {
+		ph = evenH
+	}
+	return pw, ph
+}
+
 func (m *Model) recenter() {
-	pw := render.VisiblePixelWidth(m.width)
-	ph := render.VisiblePixelHeight(m.height)
+	pw, ph := m.viewportPixels()
 	if pw <= 0 || ph <= 0 {
 		return
 	}
@@ -319,12 +336,11 @@ func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "initializing..."
 	}
-	pw := render.VisiblePixelWidth(m.width)
-	ph := render.VisiblePixelHeight(m.height)
+	pw, ph := m.viewportPixels()
 
 	canvas := render.Canvas(render.View{
-		Renderer: m.renderer,
-		Grid:     m.grid, Width: m.canvasW, Height: m.canvasH,
+		Styler: m.styler,
+		Grid:   m.grid, Width: m.canvasW, Height: m.canvasH,
 		CamX: m.camX, CamY: m.camY, PixelCols: pw, PixelRows: ph,
 		CursorX: m.cursorX, CursorY: m.cursorY, SelectedColor: m.selectedColor,
 		Remotes: m.remoteCursors(),
@@ -346,7 +362,10 @@ func (m Model) View() string {
 		BorderLeftForeground(sideColor(m.camX == 0)).
 		BorderRightForeground(sideColor(m.camX+pw >= m.canvasW))
 
-	return style.Render(canvas) + "\n" + m.statusBar()
+	// Clip the status bar to the terminal width so it never wraps onto extra
+	// lines (which would push the layout past the screen on small terminals).
+	status := m.renderer.NewStyle().MaxWidth(m.width).Render(m.statusBar())
+	return style.Render(canvas) + "\n" + status
 }
 
 func (m Model) remoteCursors() []render.RemoteCursor {
