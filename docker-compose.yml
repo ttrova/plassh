@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    ports:
+      - "2222:2222"
+    environment:
+      REDIS_ADDR: redis:6379
+      CANVAS_WIDTH: "100"
+      CANVAS_HEIGHT: "100"
+      SSH_PORT: "2222"
+      SSH_HOST_KEY: /data/host_key
+    volumes:
+      - hostkey:/data
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  hostkey:
+  redisdata:
