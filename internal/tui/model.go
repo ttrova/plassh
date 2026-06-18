@@ -50,8 +50,9 @@ type presenceEvent struct {
 	Update presence.Update
 }
 
-// pixelChange records a single pixel's prior color so an action can be undone.
-type pixelChange struct{ x, y, prev int }
+// pixelChange records a pixel's color before and after a change, so the action
+// can be undone (restore prev) and redone (re-apply next).
+type pixelChange struct{ x, y, prev, next int }
 
 // action is one undoable operation (a dab, a /circle, or a draw-mode stroke):
 // the set of pixels it changed, with their previous colors.
@@ -98,6 +99,7 @@ type Model struct {
 	statusMsg    string // transient feedback shown in the status bar
 	showHelp     bool   // help overlay is up
 	undoStack    []action
+	redoStack    []action
 	disabled     map[string]bool
 
 	width, height int // terminal size in cells
@@ -253,9 +255,7 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 			}
 			return *m, nil
 		}
-		if len(m.stroke) > 0 {
-			m.undoStack = append(m.undoStack, m.stroke)
-		}
+		m.pushUndo(m.stroke)
 		m.stroke = nil
 		return *m, nil
 	case 'h':
@@ -299,7 +299,7 @@ func (m *Model) dab() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	m.undoStack = append(m.undoStack, act)
+	m.pushUndo(act)
 	return m.flush([]write{w})
 }
 
@@ -311,9 +311,19 @@ func (m *Model) stage(x, y, color int, act *action) (write, bool) {
 		return write{}, false
 	}
 	idx := y*m.canvasW + x
-	*act = append(*act, pixelChange{x: x, y: y, prev: int(m.grid[idx])})
+	*act = append(*act, pixelChange{x: x, y: y, prev: int(m.grid[idx]), next: color})
 	m.grid[idx] = byte(color)
 	return write{x: x, y: y, c: color}, true
+}
+
+// pushUndo records a completed action and clears the redo stack (a new action
+// invalidates the redo history).
+func (m *Model) pushUndo(act action) {
+	if len(act) == 0 {
+		return
+	}
+	m.undoStack = append(m.undoStack, act)
+	m.redoStack = nil
 }
 
 // flush returns a single command that writes all pending pixels to Redis in one
@@ -404,10 +414,14 @@ func (m *Model) runCommand(c command) tea.Cmd {
 		return m.fillRect(c.x, c.y, c.x2, c.y2)
 	case cmdLine:
 		return m.drawLine(c.x, c.y, c.x2, c.y2)
+	case cmdFlood:
+		return m.flood()
 	case cmdClear:
 		return m.clear()
 	case cmdUndo:
 		return m.undo(c.count)
+	case cmdRedo:
+		return m.redo(c.count)
 	case cmdHelp:
 		m.showHelp = true
 		return nil
@@ -419,9 +433,7 @@ func (m *Model) runCommand(c command) tea.Cmd {
 
 // commitPaint records a completed paint action and returns the flush command.
 func (m *Model) commitPaint(act action, ws []write, msg string) tea.Cmd {
-	if len(act) > 0 {
-		m.undoStack = append(m.undoStack, act)
-	}
+	m.pushUndo(act)
 	m.statusMsg = msg
 	return m.flush(ws)
 }
@@ -513,8 +525,36 @@ func (m *Model) clear() tea.Cmd {
 	return m.commitPaint(act, ws, fmt.Sprintf("cleared %d px", len(ws)))
 }
 
+// flood fills the contiguous region of same-colored pixels connected to the
+// cursor with the current color, as one undo action (4-directional).
+func (m *Model) flood() tea.Cmd {
+	if !m.inBounds(m.cursorX, m.cursorY) {
+		return nil
+	}
+	target := int(m.grid[m.cursorY*m.canvasW+m.cursorX])
+	if target == m.selectedColor {
+		m.statusMsg = "nothing to fill"
+		return nil
+	}
+	var act action
+	var ws []write
+	queue := [][2]int{{m.cursorX, m.cursorY}}
+	for len(queue) > 0 {
+		p := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+		x, y := p[0], p[1]
+		if !m.inBounds(x, y) || int(m.grid[y*m.canvasW+x]) != target {
+			continue
+		}
+		w, _ := m.stage(x, y, m.selectedColor, &act) // sets pixel, marks visited
+		ws = append(ws, w)
+		queue = append(queue, [2]int{x + 1, y}, [2]int{x - 1, y}, [2]int{x, y + 1}, [2]int{x, y - 1})
+	}
+	return m.commitPaint(act, ws, fmt.Sprintf("flood %d px", len(ws)))
+}
+
 // undo reverts up to n of this session's most recent actions, restoring each
-// affected pixel to the color it had before the action.
+// affected pixel to its previous color, and moves them onto the redo stack.
 func (m *Model) undo(n int) tea.Cmd {
 	if n > maxUndo {
 		n = maxUndo
@@ -533,10 +573,38 @@ func (m *Model) undo(n int) tea.Cmd {
 			m.grid[pc.y*m.canvasW+pc.x] = byte(pc.prev)
 			ws = append(ws, write{x: pc.x, y: pc.y, c: pc.prev})
 		}
+		m.redoStack = append(m.redoStack, act)
 		undone++
 		n--
 	}
 	m.statusMsg = fmt.Sprintf("undid %d action(s)", undone)
+	return m.flush(ws)
+}
+
+// redo re-applies up to n previously-undone actions, moving them back onto the
+// undo stack.
+func (m *Model) redo(n int) tea.Cmd {
+	if n > maxUndo {
+		n = maxUndo
+	}
+	if len(m.redoStack) == 0 {
+		m.statusMsg = "nothing to redo"
+		return nil
+	}
+	var ws []write
+	redone := 0
+	for n > 0 && len(m.redoStack) > 0 {
+		act := m.redoStack[len(m.redoStack)-1]
+		m.redoStack = m.redoStack[:len(m.redoStack)-1]
+		for _, pc := range act {
+			m.grid[pc.y*m.canvasW+pc.x] = byte(pc.next)
+			ws = append(ws, write{x: pc.x, y: pc.y, c: pc.next})
+		}
+		m.undoStack = append(m.undoStack, act) // raw append: must not clear redo here
+		redone++
+		n--
+	}
+	m.statusMsg = fmt.Sprintf("redid %d action(s)", redone)
 	return m.flush(ws)
 }
 
@@ -682,8 +750,10 @@ func (m Model) helpView() string {
 		{"/circle <r>", "filled disk, radius r (max 10)"},
 		{"/fill x1 y1 x2 y2", "fill a rectangle"},
 		{"/line x1 y1 x2 y2", "draw a line"},
+		{"/flood", "flood-fill the region under the cursor"},
 		{"/clear", "clear the whole canvas"},
 		{"/undo [n]", "undo your last n actions (default 1, max 10)"},
+		{"/redo [n]", "redo undone actions (default 1, max 10)"},
 		{"/help", "this help"},
 	}
 	var b strings.Builder

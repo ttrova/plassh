@@ -14,8 +14,10 @@ const (
 	cmdTP
 	cmdCircle
 	cmdUndo
+	cmdRedo
 	cmdFill
 	cmdLine
+	cmdFlood
 	cmdClear
 	cmdHelp
 )
@@ -63,6 +65,17 @@ func parseCommand(input string) command {
 			return command{err: "usage: /undo [count]"}
 		}
 		return command{kind: cmdUndo, name: name, count: xs[0]}
+	case "redo":
+		if len(args) == 0 {
+			return command{kind: cmdRedo, name: name, count: 1} // default /redo 1
+		}
+		xs, err := ints(args, 1)
+		if err != "" || xs[0] < 1 {
+			return command{err: "usage: /redo [count]"}
+		}
+		return command{kind: cmdRedo, name: name, count: xs[0]}
+	case "flood":
+		return command{kind: cmdFlood, name: name}
 	case "fill":
 		xs, err := ints(args, 4)
 		if err != "" {

@@ -264,6 +264,59 @@ func TestHelpToggles(t *testing.T) {
 	}
 }
 
+func TestCommandFlood(t *testing.T) {
+	m := newTestModel() // 10x10, all 0
+	m.selectedColor = 6
+	m.cursorX, m.cursorY = 5, 5
+	// Put a wall so the flood is bounded to a region.
+	for y := 0; y < 10; y++ {
+		m.grid[y*m.canvasW+3] = 1 // vertical wall at x=3 (color 1)
+	}
+	m.runCommand(parseCommand("flood"))
+	// Region right of the wall (x 4..9) should be color 6; left of wall stays 0.
+	if m.grid[5*m.canvasW+4] != 6 || m.grid[5*m.canvasW+9] != 6 {
+		t.Error("flood did not fill the region right of the wall")
+	}
+	if m.grid[5*m.canvasW+0] != 0 {
+		t.Error("flood leaked across the wall")
+	}
+	if m.grid[5*m.canvasW+3] != 1 {
+		t.Error("flood overwrote the wall")
+	}
+}
+
+func TestUndoRedo(t *testing.T) {
+	m := newTestModel()
+	m.selectedColor = 7
+	m.cursorX, m.cursorY = 2, 2
+	m.dab() // paint (2,2)=7
+	idx := 2*m.canvasW + 2
+	if m.grid[idx] != 7 {
+		t.Fatal("dab failed")
+	}
+	m.runCommand(parseCommand("undo"))
+	if m.grid[idx] != 0 {
+		t.Error("undo did not revert")
+	}
+	m.runCommand(parseCommand("redo"))
+	if m.grid[idx] != 7 {
+		t.Error("redo did not re-apply")
+	}
+}
+
+func TestNewActionClearsRedo(t *testing.T) {
+	m := newTestModel()
+	m.selectedColor = 5
+	m.cursorX, m.cursorY = 1, 1
+	m.dab()
+	m.runCommand(parseCommand("undo")) // redo stack now has 1
+	m.cursorX = 4
+	m.dab()                           // new action -> redo stack cleared
+	if cmd := m.redo(1); cmd != nil { // redo should be a no-op now
+		t.Error("new action should have cleared the redo stack")
+	}
+}
+
 func TestViewportClampedToCanvas(t *testing.T) {
 	m := newTestModel() // canvas 10x10
 

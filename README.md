@@ -37,8 +37,10 @@ Press `/` to open a command line in the status bar, type, then **Enter** to run
 | `/circle <r>`         | Filled disk of radius `r` (max 10) in the current color      |
 | `/fill x1 y1 x2 y2`   | Fill the rectangle between two corners in the current color  |
 | `/line x1 y1 x2 y2`   | Draw a line between two points in the current color          |
+| `/flood`              | Flood-fill the region under the cursor with the current color |
 | `/clear`              | Clear the whole canvas                                       |
 | `/undo [n]`           | Undo your last `n` actions (default 1, max 10)               |
+| `/redo [n]`           | Redo previously undone actions (default 1, max 10)           |
 | `/help`               | Show the command list                                        |
 
 An action is one dab, one `/circle`/`/fill`/`/line`/`/clear`, or one draw stroke.

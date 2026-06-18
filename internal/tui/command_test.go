@@ -24,6 +24,15 @@ func TestParseCommandValid(t *testing.T) {
 	if c := parseCommand("clear"); c.kind != cmdClear || c.err != "" {
 		t.Errorf("clear: got %+v", c)
 	}
+	if c := parseCommand("flood"); c.kind != cmdFlood || c.err != "" {
+		t.Errorf("flood: got %+v", c)
+	}
+	if c := parseCommand("redo"); c.kind != cmdRedo || c.count != 1 || c.err != "" {
+		t.Errorf("redo default: got %+v", c)
+	}
+	if c := parseCommand("redo 4"); c.kind != cmdRedo || c.count != 4 {
+		t.Errorf("redo 4: got %+v", c)
+	}
 	if c := parseCommand("help"); c.kind != cmdHelp || c.err != "" {
 		t.Errorf("help: got %+v", c)
 	}
