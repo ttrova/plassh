@@ -6,12 +6,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RemoteCursor is one other user's cursor position, color and style (pixel coords).
+// RemoteCursor is one other user's cursor position and color (pixel coords).
 type RemoteCursor struct {
 	X     int
 	Y     int
 	Color int
-	Style int
 }
 
 // CellStyler turns a CellSpec into its styled terminal string, caching the
@@ -63,7 +62,6 @@ type View struct {
 	CursorX       int
 	CursorY       int
 	SelectedColor int
-	OwnStyle      int
 	Remotes       []RemoteCursor
 }
 
@@ -87,11 +85,11 @@ func Canvas(v View) string {
 
 			ownTop := px == v.CursorX && topY == v.CursorY
 			ownBot := px == v.CursorX && botY == v.CursorY
-			own := Cursor{Here: ownTop || ownBot, OnTop: ownTop, Color: v.SelectedColor, Style: v.OwnStyle}
+			ownHere := ownTop || ownBot
 
-			remote := v.remoteAt(px, topY, botY)
+			remoteHere, remoteOnTop, remoteColor := v.remoteAt(px, topY, botY)
 
-			spec := DecideCell(top, bottom, own, remote)
+			spec := DecideCell(top, bottom, ownHere, ownTop, v.SelectedColor, remoteHere, remoteOnTop, remoteColor)
 			b.WriteString(styler.Style(spec))
 		}
 		if row < cellRows-1 {
@@ -109,18 +107,18 @@ func (v View) pixel(x, y int) int {
 	return int(v.Grid[y*v.Width+x])
 }
 
-// remoteAt returns the remote cursor sitting on either pixel of this cell, if any.
-func (v View) remoteAt(px, topY, botY int) Cursor {
+// remoteAt reports whether a remote cursor sits on either pixel of this cell.
+func (v View) remoteAt(px, topY, botY int) (here, onTop bool, color int) {
 	for _, r := range v.Remotes {
 		if r.X != px {
 			continue
 		}
 		if r.Y == topY {
-			return Cursor{Here: true, OnTop: true, Color: r.Color, Style: r.Style}
+			return true, true, r.Color
 		}
 		if r.Y == botY {
-			return Cursor{Here: true, OnTop: false, Color: r.Color, Style: r.Style}
+			return true, false, r.Color
 		}
 	}
-	return Cursor{}
+	return false, false, 0
 }

@@ -48,16 +48,10 @@ it had before your action (last-write-wins, so it can overwrite others' later ed
 Commands can be disabled by the operator via the `DISABLED_COMMANDS` environment
 variable (comma-separated names, e.g. `DISABLED_COMMANDS=clear,fill`).
 
-Each player's cursor is a top/bottom half glyph in that player's selected color,
-sitting on its pixel. Every player is assigned one of a few cursor **styles**
-(medium-shade `🮎`/`🮏`, quarter, three-quarter, thin-edge) from their session, so
-players are distinguishable beyond color alone while the glyph still shows which
-pixel (top or bottom) the cursor is on. The connected players are also listed in
-the header above the canvas.
-
-With **draw mode** on (`d`), every cursor move lays down a pixel, so you can drag
-out lines and shapes; the status bar shows `DRAW` while it's active. Press `d`
-again to stop.
+Your cursor — and every other user's — is a top/bottom half-shade square
+(`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**
+on (`d`), every cursor move lays down a pixel, so you can drag out lines and
+shapes; the status bar shows `DRAW` while it's active. Press `d` again to stop.
 
 ## Configuration
 
