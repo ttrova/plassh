@@ -52,7 +52,7 @@ it had before your action (last-write-wins, so it can overwrite others' later ed
 - `DISABLED_COMMANDS` — hard-disable commands for everyone (comma-separated, e.g. `clear,fill`).
 - `ADMIN_PASSWORD` — enables `/login`; unset means no admin.
 - `ADMIN_COMMANDS` — commands that require admin (comma-separated). Use `*` to require admin for **all** commands (`/login` and `/help` always stay open).
-- `PAINT_COOLDOWN_MS` — minimum delay between paint actions (dabs, draw-mode pixels, and paint commands); `0` disables it. Admins are exempt.
+- `PAINT_COOLDOWN_MS` — minimum delay between paint actions (dabs, draw-mode pixels, and paint commands); `0` disables it. Admins are exempt. When enabled, the status bar shows a live `⏳ <remaining>s` countdown (and `ready` when you can paint again).
 
 Your cursor — and every other user's — is a top/bottom half-shade square
 (`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**

@@ -389,6 +389,27 @@ func TestPaintCooldown(t *testing.T) {
 	}
 }
 
+func TestCooldownRemaining(t *testing.T) {
+	m := newTestModel()
+	if m.cooldownRemaining() != 0 {
+		t.Error("no cooldown configured -> remaining 0")
+	}
+	m.cooldown = 10 * time.Second
+	m.lastPaint = time.Now()
+	if rem := m.cooldownRemaining(); rem <= 0 || rem > 10*time.Second {
+		t.Errorf("remaining = %v, want (0,10s]", rem)
+	}
+	m.lastPaint = time.Now().Add(-20 * time.Second)
+	if m.cooldownRemaining() != 0 {
+		t.Error("elapsed cooldown -> remaining 0")
+	}
+	m.lastPaint = time.Now()
+	m.admin = true
+	if m.cooldownRemaining() != 0 {
+		t.Error("admin -> remaining 0")
+	}
+}
+
 func TestAdminExemptFromCooldown(t *testing.T) {
 	m := newTestModel()
 	m.cooldown = time.Hour

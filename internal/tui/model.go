@@ -36,6 +36,7 @@ type (
 	}
 	PresenceGoneMsg struct{ ID string }
 	heartbeatMsg    struct{}
+	cooldownTickMsg struct{}
 )
 
 // remote is a tracked remote cursor with a last-seen timestamp for expiry.
@@ -172,7 +173,11 @@ func New(d Deps) Model {
 // presence immediately so other users see the new cursor without waiting for the
 // first heartbeat.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(waitPixel(m.pixels), waitPresence(m.presence), heartbeat(), m.announce())
+	cmds := []tea.Cmd{waitPixel(m.pixels), waitPresence(m.presence), heartbeat(), m.announce()}
+	if m.cooldown > 0 {
+		cmds = append(cmds, cooldownTick()) // drives the live cooldown countdown
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles all messages and returns the next model + command.
@@ -213,6 +218,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.announcer.Publish(m.ctx, u)
 		}
 		return m, heartbeat()
+
+	case cooldownTickMsg:
+		// Re-render (the View recomputes the remaining cooldown) and keep ticking
+		// while a cooldown is configured.
+		if m.cooldown > 0 {
+			return m, cooldownTick()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -487,6 +500,18 @@ func (m *Model) login(pw string) tea.Cmd {
 		m.statusMsg = "wrong password"
 	}
 	return nil
+}
+
+// cooldownRemaining is how long until the next paint is allowed (0 when ready,
+// disabled, or admin).
+func (m Model) cooldownRemaining() time.Duration {
+	if m.cooldown <= 0 || m.admin {
+		return 0
+	}
+	if r := m.cooldown - time.Since(m.lastPaint); r > 0 {
+		return r
+	}
+	return 0
 }
 
 // allowPaint enforces the paint cooldown. Admins and a zero cooldown are always
@@ -892,6 +917,14 @@ func (m Model) statusBar() string {
 	if m.admin {
 		draw += " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(3)).Bold(true).Render("ADMIN")
 	}
+	if m.cooldown > 0 && !m.admin {
+		if rem := m.cooldownRemaining(); rem > 0 {
+			draw += " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(1)).Render(
+				fmt.Sprintf("⏳ %.1fs", rem.Seconds()))
+		} else {
+			draw += " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(2)).Render("ready")
+		}
+	}
 	tail := "1-8/Tab color · Space dab · d draw · / cmd · q quit"
 	if m.statusMsg != "" {
 		tail = m.statusMsg
@@ -935,4 +968,10 @@ func waitPresence(ch <-chan presenceEvent) tea.Cmd {
 
 func heartbeat() tea.Cmd {
 	return tea.Tick(heartbeatInterval, func(time.Time) tea.Msg { return heartbeatMsg{} })
+}
+
+const cooldownRefresh = 500 * time.Millisecond
+
+func cooldownTick() tea.Cmd {
+	return tea.Tick(cooldownRefresh, func(time.Time) tea.Msg { return cooldownTickMsg{} })
 }
