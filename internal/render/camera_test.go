@@ -31,9 +31,9 @@ func TestCameraViewportLargerThanCanvas(t *testing.T) {
 }
 
 func TestVisiblePixels(t *testing.T) {
-	// 24 rows total, chrome = 3 -> 21 usable rows -> 42 pixel rows.
-	if got := VisiblePixelHeight(24); got != 42 {
-		t.Errorf("VisiblePixelHeight(24) = %d, want 42", got)
+	// 24 rows total, chrome = 4 (header+2 border+status) -> 20 usable -> 40 pixel rows.
+	if got := VisiblePixelHeight(24); got != 40 {
+		t.Errorf("VisiblePixelHeight(24) = %d, want 40", got)
 	}
 	// 80 cols total, chrome = 2 -> 78 usable pixel columns.
 	if got := VisiblePixelWidth(80); got != 78 {

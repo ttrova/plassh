@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -73,6 +74,7 @@ type Deps struct {
 	Announcer Announcer
 	Pixels    <-chan PixelUpdateMsg
 	Presence  <-chan presenceEvent
+	Disabled  map[string]bool // disabled slash-command names
 }
 
 // Model is the Bubble Tea model for one session.
@@ -94,7 +96,9 @@ type Model struct {
 	commandMode  bool   // typing a slash command
 	commandInput string // command text being typed (without leading '/')
 	statusMsg    string // transient feedback shown in the status bar
+	showHelp     bool   // help overlay is up
 	undoStack    []action
+	disabled     map[string]bool
 
 	width, height int // terminal size in cells
 	remotes       map[string]remote
@@ -119,6 +123,10 @@ func New(d Deps) Model {
 	if renderer == nil {
 		renderer = lipgloss.DefaultRenderer()
 	}
+	disabled := d.Disabled
+	if disabled == nil {
+		disabled = make(map[string]bool)
+	}
 	return Model{
 		ctx:           ctx,
 		canvasW:       d.Width,
@@ -130,6 +138,7 @@ func New(d Deps) Model {
 		remotes:       make(map[string]remote),
 		renderer:      renderer,
 		styler:        render.NewCellStyler(renderer),
+		disabled:      disabled,
 		painter:       d.Painter,
 		announcer:     d.Announcer,
 		pixels:        d.Pixels,
@@ -188,6 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // any normal key clears the last command's feedback
+	m.showHelp = false
 	moved := false
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -368,9 +378,19 @@ func (m *Model) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
+// maxCircleRadius and maxUndo bound the two unbounded commands.
+const (
+	maxCircleRadius = 10
+	maxUndo         = 10
+)
+
 // runCommand executes a parsed command, sets a status message, and returns any
 // Redis writes / presence updates it produced.
 func (m *Model) runCommand(c command) tea.Cmd {
+	if c.kind != cmdUnknown && m.disabled[c.name] {
+		m.statusMsg = "/" + c.name + " is disabled"
+		return nil
+	}
 	switch c.kind {
 	case cmdTP:
 		m.cursorX = clampInt(c.x, 0, m.canvasW-1)
@@ -380,24 +400,37 @@ func (m *Model) runCommand(c command) tea.Cmd {
 		return m.announce()
 	case cmdCircle:
 		return m.drawCircle(c.size)
+	case cmdFill:
+		return m.fillRect(c.x, c.y, c.x2, c.y2)
+	case cmdLine:
+		return m.drawLine(c.x, c.y, c.x2, c.y2)
+	case cmdClear:
+		return m.clear()
 	case cmdUndo:
 		return m.undo(c.count)
+	case cmdHelp:
+		m.showHelp = true
+		return nil
 	default:
 		m.statusMsg = c.err
 		return nil
 	}
 }
 
-// drawCircle paints a filled disk of the given radius centered on the cursor in
-// the current color, recorded as a single undo action. The radius is capped to
-// the canvas size to bound the work.
-func (m *Model) drawCircle(size int) tea.Cmd {
-	maxDim := m.canvasW
-	if m.canvasH > maxDim {
-		maxDim = m.canvasH
+// commitPaint records a completed paint action and returns the flush command.
+func (m *Model) commitPaint(act action, ws []write, msg string) tea.Cmd {
+	if len(act) > 0 {
+		m.undoStack = append(m.undoStack, act)
 	}
-	if size > maxDim {
-		size = maxDim
+	m.statusMsg = msg
+	return m.flush(ws)
+}
+
+// drawCircle paints a filled disk of the given radius centered on the cursor in
+// the current color, recorded as a single undo action. Radius is capped.
+func (m *Model) drawCircle(size int) tea.Cmd {
+	if size > maxCircleRadius {
+		size = maxCircleRadius
 	}
 	cx, cy := m.cursorX, m.cursorY
 	r2 := size * size
@@ -413,16 +446,79 @@ func (m *Model) drawCircle(size int) tea.Cmd {
 			}
 		}
 	}
-	if len(act) > 0 {
-		m.undoStack = append(m.undoStack, act)
+	return m.commitPaint(act, ws, fmt.Sprintf("circle r=%d (%d px)", size, len(ws)))
+}
+
+// fillRect paints the rectangle spanned by the two corners in the current color,
+// as one undo action.
+func (m *Model) fillRect(x1, y1, x2, y2 int) tea.Cmd {
+	x1, x2 = clampInt(min(x1, x2), 0, m.canvasW-1), clampInt(max(x1, x2), 0, m.canvasW-1)
+	y1, y2 = clampInt(min(y1, y2), 0, m.canvasH-1), clampInt(max(y1, y2), 0, m.canvasH-1)
+	var act action
+	var ws []write
+	for y := y1; y <= y2; y++ {
+		for x := x1; x <= x2; x++ {
+			if w, ok := m.stage(x, y, m.selectedColor, &act); ok {
+				ws = append(ws, w)
+			}
+		}
 	}
-	m.statusMsg = fmt.Sprintf("circle r=%d (%d px)", size, len(ws))
-	return m.flush(ws)
+	return m.commitPaint(act, ws, fmt.Sprintf("filled %d px", len(ws)))
+}
+
+// drawLine paints a Bresenham line between the two points in the current color,
+// as one undo action.
+func (m *Model) drawLine(x1, y1, x2, y2 int) tea.Cmd {
+	x1, y1 = clampInt(x1, 0, m.canvasW-1), clampInt(y1, 0, m.canvasH-1)
+	x2, y2 = clampInt(x2, 0, m.canvasW-1), clampInt(y2, 0, m.canvasH-1)
+	dx, dy := abs(x2-x1), -abs(y2-y1)
+	sx, sy := sign(x2-x1), sign(y2-y1)
+	err := dx + dy
+	var act action
+	var ws []write
+	for {
+		if w, ok := m.stage(x1, y1, m.selectedColor, &act); ok {
+			ws = append(ws, w)
+		}
+		if x1 == x2 && y1 == y2 {
+			break
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x1 += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y1 += sy
+		}
+	}
+	return m.commitPaint(act, ws, fmt.Sprintf("line (%d px)", len(ws)))
+}
+
+// clear resets every painted pixel to black, as one undo action.
+func (m *Model) clear() tea.Cmd {
+	var act action
+	var ws []write
+	for y := 0; y < m.canvasH; y++ {
+		for x := 0; x < m.canvasW; x++ {
+			if m.grid[y*m.canvasW+x] == 0 {
+				continue
+			}
+			if w, ok := m.stage(x, y, 0, &act); ok {
+				ws = append(ws, w)
+			}
+		}
+	}
+	return m.commitPaint(act, ws, fmt.Sprintf("cleared %d px", len(ws)))
 }
 
 // undo reverts up to n of this session's most recent actions, restoring each
 // affected pixel to the color it had before the action.
 func (m *Model) undo(n int) tea.Cmd {
+	if n > maxUndo {
+		n = maxUndo
+	}
 	if len(m.undoStack) == 0 {
 		m.statusMsg = "nothing to undo"
 		return nil
@@ -452,6 +548,24 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func sign(v int) int {
+	switch {
+	case v > 0:
+		return 1
+	case v < 0:
+		return -1
+	default:
+		return 0
+	}
 }
 
 // viewportPixels is the visible pixel area, never larger than the canvas itself.
@@ -505,10 +619,14 @@ func clampMove(v, size int) (int, bool) {
 	return v, true
 }
 
-// View renders border + canvas + status bar.
+// View renders the players header, bordered canvas, and status bar (or the help
+// overlay when it is up).
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "initializing..."
+	}
+	if m.showHelp {
+		return m.helpView()
 	}
 	pw, ph := m.viewportPixels()
 
@@ -536,10 +654,51 @@ func (m Model) View() string {
 		BorderLeftForeground(sideColor(m.camX == 0)).
 		BorderRightForeground(sideColor(m.camX+pw >= m.canvasW))
 
-	// Clip the status bar to the terminal width so it never wraps onto extra
-	// lines (which would push the layout past the screen on small terminals).
-	status := m.renderer.NewStyle().MaxWidth(m.width).Render(m.statusBar())
-	return style.Render(canvas) + "\n" + status
+	// Clip the header and status bar to the terminal width so they never wrap onto
+	// extra lines (which would push the layout past the screen on small terminals).
+	clip := m.renderer.NewStyle().MaxWidth(m.width)
+	header := clip.Render(m.playerList())
+	status := clip.Render(m.statusBar())
+	return header + "\n" + style.Render(canvas) + "\n" + status
+}
+
+// playerList renders the connected players (you first) with color swatches.
+func (m Model) playerList() string {
+	swatch := func(c int) string {
+		return m.renderer.NewStyle().Foreground(render.ColorAt(c)).Render("█")
+	}
+	parts := []string{swatch(m.selectedColor) + m.name + " (you)"}
+	for _, r := range m.remotes {
+		parts = append(parts, swatch(r.color)+r.name)
+	}
+	return fmt.Sprintf("Players (%d): %s", len(m.remotes)+1, strings.Join(parts, "  "))
+}
+
+// helpView renders the command help as a bordered panel.
+func (m Model) helpView() string {
+	type entry struct{ usage, desc string }
+	entries := []entry{
+		{"/tp x y", "move the cursor"},
+		{"/circle <r>", "filled disk, radius r (max 10)"},
+		{"/fill x1 y1 x2 y2", "fill a rectangle"},
+		{"/line x1 y1 x2 y2", "draw a line"},
+		{"/clear", "clear the whole canvas"},
+		{"/undo [n]", "undo your last n actions (default 1, max 10)"},
+		{"/help", "this help"},
+	}
+	var b strings.Builder
+	b.WriteString("Commands\n\n")
+	for _, e := range entries {
+		name := strings.TrimPrefix(strings.Fields(e.usage)[0], "/")
+		line := fmt.Sprintf("  %-20s %s", e.usage, e.desc)
+		if m.disabled[name] {
+			line += "  (disabled)"
+		}
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n(press any key to dismiss)")
+	panel := m.renderer.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Render(b.String())
+	return m.renderer.NewStyle().MaxWidth(m.width).Render(panel)
 }
 
 func (m Model) remoteCursors() []render.RemoteCursor {

@@ -165,6 +165,105 @@ func TestDrawStrokeIsOneUndoAction(t *testing.T) {
 	}
 }
 
+func TestCommandFillRect(t *testing.T) {
+	m := newTestModel() // 10x10
+	m.selectedColor = 5
+	m.runCommand(parseCommand("fill 1 1 3 2")) // x:1..3, y:1..2 => 6 pixels
+	for y := 1; y <= 2; y++ {
+		for x := 1; x <= 3; x++ {
+			if m.grid[y*m.canvasW+x] != 5 {
+				t.Errorf("fill pixel %d,%d = %d, want 5", x, y, m.grid[y*m.canvasW+x])
+			}
+		}
+	}
+	if m.grid[0] != 0 {
+		t.Error("pixel outside rect should be untouched")
+	}
+	if len(m.undoStack) != 1 {
+		t.Errorf("fill should be one action, got %d", len(m.undoStack))
+	}
+}
+
+func TestCommandLine(t *testing.T) {
+	m := newTestModel()
+	m.selectedColor = 4
+	m.runCommand(parseCommand("line 0 0 3 0")) // horizontal line y=0, x:0..3
+	for x := 0; x <= 3; x++ {
+		if m.grid[x] != 4 {
+			t.Errorf("line pixel %d = %d, want 4", x, m.grid[x])
+		}
+	}
+	if len(m.undoStack) != 1 {
+		t.Errorf("line should be one action, got %d", len(m.undoStack))
+	}
+}
+
+func TestCommandClear(t *testing.T) {
+	m := newTestModel()
+	m.grid[0] = 3
+	m.grid[55] = 7
+	m.runCommand(parseCommand("clear"))
+	for i, b := range m.grid {
+		if b != 0 {
+			t.Fatalf("grid[%d] = %d after clear, want 0", i, b)
+		}
+	}
+	// clear is undoable
+	m.runCommand(parseCommand("undo"))
+	if m.grid[0] != 3 || m.grid[55] != 7 {
+		t.Error("undo should restore cleared pixels")
+	}
+}
+
+func TestCircleRadiusCapped(t *testing.T) {
+	m := newTestModel()
+	m.cursorX, m.cursorY = 5, 5
+	m.runCommand(parseCommand("circle 999"))
+	// Radius capped at 10; with a 10x10 canvas it just fills what's in bounds,
+	// but it must not panic or run unbounded. Status reports the capped radius.
+	if want := "circle r=10"; len(m.statusMsg) < len(want) || m.statusMsg[:len(want)] != want {
+		t.Errorf("statusMsg = %q, want prefix %q", m.statusMsg, want)
+	}
+}
+
+func TestUndoCountCapped(t *testing.T) {
+	m := newTestModel()
+	// push 15 dab actions
+	for i := 0; i < 15; i++ {
+		m.cursorX = i % m.canvasW
+		m.dab()
+	}
+	m.runCommand(parseCommand("undo 999")) // capped to 10
+	if len(m.undoStack) != 5 {
+		t.Errorf("undoStack = %d after capped undo, want 5", len(m.undoStack))
+	}
+}
+
+func TestDisabledCommand(t *testing.T) {
+	m := New(Deps{Width: 10, Height: 10, Grid: make([]byte, 100), Disabled: map[string]bool{"clear": true}})
+	m.grid[0] = 3
+	m.runCommand(parseCommand("clear"))
+	if m.grid[0] != 3 {
+		t.Error("disabled /clear should not run")
+	}
+	if m.statusMsg == "" {
+		t.Error("expected a disabled message")
+	}
+}
+
+func TestHelpToggles(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.runCommand(parseCommand("help"))
+	if !m.showHelp {
+		t.Fatal("expected showHelp true")
+	}
+	m = send(m, keyMsg("x")) // any normal key dismisses
+	if m.showHelp {
+		t.Error("expected help dismissed on keypress")
+	}
+}
+
 func TestViewportClampedToCanvas(t *testing.T) {
 	m := newTestModel() // canvas 10x10
 
@@ -175,9 +274,10 @@ func TestViewportClampedToCanvas(t *testing.T) {
 	}
 
 	// Terminal smaller than the canvas -> viewport follows the window.
-	m.width, m.height = 8, 6
-	if pw, ph := m.viewportPixels(); pw != 6 || ph != 6 {
-		t.Errorf("small terminal: got %dx%d pixels, want 6x6", pw, ph)
+	// width 8 -> 6 cols; height 8 -> (8-4)*2 = 8 px rows.
+	m.width, m.height = 8, 8
+	if pw, ph := m.viewportPixels(); pw != 6 || ph != 8 {
+		t.Errorf("small terminal: got %dx%d pixels, want 6x8", pw, ph)
 	}
 }
 

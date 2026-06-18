@@ -1,10 +1,12 @@
 package render
 
-// Chrome dimensions: a 1-cell border on each side plus a 1-row status bar.
+// Chrome dimensions: a 1-row player-list header, a 1-cell border on each side,
+// and a 1-row status bar.
 const (
 	borderRows = 2 // top + bottom border
 	borderCols = 2 // left + right border
 	statusRows = 1
+	headerRows = 1 // connected-players line above the canvas
 )
 
 func clamp(v, lo, hi int) int {
@@ -36,7 +38,7 @@ func CameraFor(cursor, cam, viewport, canvasSize int) int {
 // VisiblePixelHeight converts a terminal row count into visible pixel rows,
 // accounting for chrome and the 2-pixels-per-cell vertical doubling.
 func VisiblePixelHeight(termRows int) int {
-	usable := termRows - borderRows - statusRows
+	usable := termRows - borderRows - statusRows - headerRows
 	if usable < 0 {
 		usable = 0
 	}

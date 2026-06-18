@@ -31,14 +31,22 @@ users. No password or key is required.
 Press `/` to open a command line in the status bar, type, then **Enter** to run
 (**Esc** cancels, **Backspace** edits):
 
-| Command          | Action                                                            |
-|------------------|-------------------------------------------------------------------|
-| `/tp x y`        | Teleport the cursor to pixel `x,y` (clamped to the canvas)        |
-| `/circle <r>`    | Paint a filled disk of radius `r` at the cursor in the current color |
-| `/undo <n>`      | Undo your last `n` actions (a dab, a circle, or a draw stroke each count as one) |
+| Command               | Action                                                       |
+|-----------------------|--------------------------------------------------------------|
+| `/tp x y`             | Teleport the cursor to pixel `x,y` (clamped to the canvas)   |
+| `/circle <r>`         | Filled disk of radius `r` (max 10) in the current color      |
+| `/fill x1 y1 x2 y2`   | Fill the rectangle between two corners in the current color  |
+| `/line x1 y1 x2 y2`   | Draw a line between two points in the current color          |
+| `/clear`              | Clear the whole canvas                                       |
+| `/undo [n]`           | Undo your last `n` actions (default 1, max 10)               |
+| `/help`               | Show the command list                                        |
 
+An action is one dab, one `/circle`/`/fill`/`/line`/`/clear`, or one draw stroke.
 Undo is per-session and in-memory: it restores each affected pixel to the color
 it had before your action (last-write-wins, so it can overwrite others' later edits).
+
+Commands can be disabled by the operator via the `DISABLED_COMMANDS` environment
+variable (comma-separated names, e.g. `DISABLED_COMMANDS=clear,fill`).
 
 Your cursor — and every other user's — is a top/bottom half-shade square
 (`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**
@@ -54,6 +62,7 @@ shapes; the status bar shows `DRAW` while it's active. Press `d` again to stop.
 | `REDIS_ADDR`    | `localhost:6379` | Redis address          |
 | `SSH_PORT`      | `2222`           | SSH listen port        |
 | `SSH_HOST_KEY`  | `./host_key`     | Host key path (auto-generated if missing) |
+| `DISABLED_COMMANDS` | (none)       | Comma-separated slash commands to disable |
 
 State lives in Redis (canvas grid + presence), so it survives app restarts as long
 as the Redis volume persists.

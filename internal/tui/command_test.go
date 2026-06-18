@@ -12,6 +12,21 @@ func TestParseCommandValid(t *testing.T) {
 	if c := parseCommand("undo 3"); c.kind != cmdUndo || c.count != 3 || c.err != "" {
 		t.Errorf("undo: got %+v", c)
 	}
+	if c := parseCommand("undo"); c.kind != cmdUndo || c.count != 1 || c.err != "" {
+		t.Errorf("undo default: got %+v", c)
+	}
+	if c := parseCommand("fill 1 2 3 4"); c.kind != cmdFill || c.x != 1 || c.y != 2 || c.x2 != 3 || c.y2 != 4 {
+		t.Errorf("fill: got %+v", c)
+	}
+	if c := parseCommand("line 0 0 9 9"); c.kind != cmdLine || c.x != 0 || c.y != 0 || c.x2 != 9 || c.y2 != 9 {
+		t.Errorf("line: got %+v", c)
+	}
+	if c := parseCommand("clear"); c.kind != cmdClear || c.err != "" {
+		t.Errorf("clear: got %+v", c)
+	}
+	if c := parseCommand("help"); c.kind != cmdHelp || c.err != "" {
+		t.Errorf("help: got %+v", c)
+	}
 	if c := parseCommand("  TP   1   2 "); c.kind != cmdTP || c.x != 1 || c.y != 2 {
 		t.Errorf("case/spacing: got %+v", c)
 	}
@@ -28,6 +43,8 @@ func TestParseCommandInvalid(t *testing.T) {
 		"undo 0",
 		"undo -2",
 		"undo two",
+		"fill 1 2 3",
+		"line 1 2 3 x",
 		"frobnicate 1",
 	}
 	for _, in := range bad {

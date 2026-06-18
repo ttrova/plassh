@@ -27,6 +27,20 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadDisabledCommands(t *testing.T) {
+	t.Setenv("DISABLED_COMMANDS", " Clear , fill ,")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !c.DisabledCommands["clear"] || !c.DisabledCommands["fill"] {
+		t.Errorf("DisabledCommands = %v, want clear+fill", c.DisabledCommands)
+	}
+	if c.DisabledCommands["tp"] {
+		t.Error("tp should not be disabled")
+	}
+}
+
 func TestLoadOverrides(t *testing.T) {
 	t.Setenv("CANVAS_WIDTH", "200")
 	t.Setenv("CANVAS_HEIGHT", "50")

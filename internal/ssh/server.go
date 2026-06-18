@@ -62,6 +62,7 @@ func handler(cfg config.Config, cv *canvas.Canvas, pr *presence.Presence) bm.Han
 			Announcer: pr,
 			Pixels:    pixCh,
 			Presence:  presCh,
+			Disabled:  cfg.DisabledCommands,
 		})
 		m = tui.WithExisting(m, existing, id)
 

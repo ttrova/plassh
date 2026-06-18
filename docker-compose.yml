@@ -5,10 +5,12 @@ services:
       - "2222:2222"
     environment:
       REDIS_ADDR: redis:6379
-      CANVAS_WIDTH: "100"
-      CANVAS_HEIGHT: "100"
+      CANVAS_WIDTH: "160"
+      CANVAS_HEIGHT: "90"
       SSH_PORT: "2222"
       SSH_HOST_KEY: /data/host_key
+      # Comma-separated slash commands to disable, e.g. "clear,fill". Empty = all enabled.
+      DISABLED_COMMANDS: ""
     volumes:
       - hostkey:/data
     restart: on-failure
