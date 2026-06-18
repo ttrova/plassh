@@ -111,9 +111,11 @@ func New(d Deps) Model {
 	}
 }
 
-// Init starts the message pumps and heartbeat.
+// Init starts the message pumps and heartbeat, and announces this session's
+// presence immediately so other users see the new cursor without waiting for the
+// first heartbeat.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(waitPixel(m.pixels), waitPresence(m.presence), heartbeat())
+	return tea.Batch(waitPixel(m.pixels), waitPresence(m.presence), heartbeat(), m.announce())
 }
 
 // Update handles all messages and returns the next model + command.
@@ -300,8 +302,23 @@ func (m Model) View() string {
 		Remotes: m.remoteCursors(),
 	})
 
-	bordered := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Render(canvas)
-	return bordered + "\n" + m.statusBar()
+	// Highlight the sides where the true canvas edge is currently in view, so the
+	// user can tell a real boundary from a mid-canvas scroll edge.
+	edgeColor := lipgloss.Color("11")  // bright yellow = real canvas edge
+	scrollColor := lipgloss.Color("8") // dim grey = more canvas beyond
+	sideColor := func(atEdge bool) lipgloss.Color {
+		if atEdge {
+			return edgeColor
+		}
+		return scrollColor
+	}
+	style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).
+		BorderTopForeground(sideColor(m.camY == 0)).
+		BorderBottomForeground(sideColor(m.camY+ph >= m.canvasH)).
+		BorderLeftForeground(sideColor(m.camX == 0)).
+		BorderRightForeground(sideColor(m.camX+pw >= m.canvasW))
+
+	return style.Render(canvas) + "\n" + m.statusBar()
 }
 
 func (m Model) remoteCursors() []render.RemoteCursor {

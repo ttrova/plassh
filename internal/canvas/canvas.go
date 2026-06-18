@@ -39,13 +39,11 @@ func (c *Canvas) Load(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Defensive: pad if shorter than expected (e.g. resized canvas).
-	if len(b) < c.width*c.height {
-		padded := make([]byte, c.width*c.height)
-		copy(padded, b)
-		return padded, nil
-	}
-	return b, nil
+	// Always return a caller-owned buffer (the model mutates it in place): pad if
+	// shorter than expected (e.g. resized canvas), otherwise copy.
+	grid := make([]byte, c.width*c.height)
+	copy(grid, b)
+	return grid, nil
 }
 
 // SetPixel writes one pixel to Redis and publishes the change.

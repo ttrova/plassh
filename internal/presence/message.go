@@ -67,8 +67,8 @@ func SanitizeName(name string) string {
 		b.WriteRune(r)
 	}
 	out := strings.TrimSpace(b.String())
-	if len(out) > maxNameLen {
-		out = out[:maxNameLen]
+	if runes := []rune(out); len(runes) > maxNameLen {
+		out = string(runes[:maxNameLen])
 	}
 	if out == "" {
 		return "anon"
