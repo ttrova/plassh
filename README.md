@@ -23,7 +23,22 @@ users. No password or key is required.
 | `d`                          | Toggle draw mode (paint while you move) |
 | `1`–`8`                      | Select color                            |
 | `Tab`                        | Cycle color                             |
+| `/`                          | Open the command line (see below)       |
 | `q` / `Ctrl+C`               | Quit                                    |
+
+### Commands
+
+Press `/` to open a command line in the status bar, type, then **Enter** to run
+(**Esc** cancels, **Backspace** edits):
+
+| Command          | Action                                                            |
+|------------------|-------------------------------------------------------------------|
+| `/tp x y`        | Teleport the cursor to pixel `x,y` (clamped to the canvas)        |
+| `/circle <r>`    | Paint a filled disk of radius `r` at the cursor in the current color |
+| `/undo <n>`      | Undo your last `n` actions (a dab, a circle, or a draw stroke each count as one) |
+
+Undo is per-session and in-memory: it restores each affected pixel to the color
+it had before your action (last-write-wins, so it can overwrite others' later edits).
 
 Your cursor — and every other user's — is a top/bottom half-shade square
 (`🮎`/`🮏`) in that user's selected color, sitting on its pixel. With **draw mode**

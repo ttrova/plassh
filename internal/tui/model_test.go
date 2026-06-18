@@ -71,6 +71,100 @@ func TestPaintUpdatesLocalGrid(t *testing.T) {
 	}
 }
 
+func send(m Model, msg tea.Msg) Model {
+	u, _ := m.Update(msg)
+	return u.(Model)
+}
+
+func TestCommandModeTeleport(t *testing.T) {
+	m := newTestModel() // canvas 10x10
+	m.width, m.height = 80, 24
+
+	m = send(m, keyMsg("/"))
+	if !m.commandMode {
+		t.Fatal("expected command mode after '/'")
+	}
+	for _, ch := range []string{"t", "p"} {
+		m = send(m, keyMsg(ch))
+	}
+	m = send(m, tea.KeyMsg{Type: tea.KeySpace})
+	m = send(m, keyMsg("3"))
+	m = send(m, tea.KeyMsg{Type: tea.KeySpace})
+	m = send(m, keyMsg("4"))
+	if m.commandInput != "tp 3 4" {
+		t.Fatalf("commandInput = %q, want %q", m.commandInput, "tp 3 4")
+	}
+	m = send(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.commandMode {
+		t.Error("expected command mode to exit on Enter")
+	}
+	if m.cursorX != 3 || m.cursorY != 4 {
+		t.Errorf("cursor = %d,%d, want 3,4", m.cursorX, m.cursorY)
+	}
+}
+
+func TestCommandTeleportClamps(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.runCommand(parseCommand("tp 999 999"))
+	if m.cursorX != 9 || m.cursorY != 9 {
+		t.Errorf("cursor = %d,%d, want 9,9 (clamped)", m.cursorX, m.cursorY)
+	}
+}
+
+func TestCommandCircleAndUndo(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.selectedColor = 2
+	m.cursorX, m.cursorY = 5, 5
+
+	m.runCommand(parseCommand("circle 1")) // filled disk radius 1 = plus of 5 pixels
+	plus := [][2]int{{5, 5}, {6, 5}, {4, 5}, {5, 6}, {5, 4}}
+	for _, p := range plus {
+		if got := m.grid[p[1]*m.canvasW+p[0]]; got != 2 {
+			t.Errorf("pixel %v = %d, want 2", p, got)
+		}
+	}
+	if len(m.undoStack) != 1 {
+		t.Fatalf("undoStack len = %d, want 1", len(m.undoStack))
+	}
+
+	m.runCommand(parseCommand("undo 1"))
+	for _, p := range plus {
+		if got := m.grid[p[1]*m.canvasW+p[0]]; got != 0 {
+			t.Errorf("after undo pixel %v = %d, want 0", p, got)
+		}
+	}
+	if len(m.undoStack) != 0 {
+		t.Errorf("undoStack len = %d, want 0 after undo", len(m.undoStack))
+	}
+}
+
+func TestDrawStrokeIsOneUndoAction(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24 // default color 1
+
+	m = send(m, keyMsg("d")) // pen down at (0,0)
+	m = send(m, keyMsg("l")) // (1,0)
+	m = send(m, keyMsg("l")) // (2,0)
+	m = send(m, keyMsg("d")) // pen up -> commit one action
+
+	if len(m.undoStack) != 1 {
+		t.Fatalf("undoStack len = %d, want 1 (whole stroke)", len(m.undoStack))
+	}
+	for x := 0; x <= 2; x++ {
+		if m.grid[x] != 1 {
+			t.Errorf("stroke pixel (%d,0) = %d, want 1", x, m.grid[x])
+		}
+	}
+	m.runCommand(parseCommand("undo 1"))
+	for x := 0; x <= 2; x++ {
+		if m.grid[x] != 0 {
+			t.Errorf("after undo (%d,0) = %d, want 0", x, m.grid[x])
+		}
+	}
+}
+
 func TestViewportClampedToCanvas(t *testing.T) {
 	m := newTestModel() // canvas 10x10
 

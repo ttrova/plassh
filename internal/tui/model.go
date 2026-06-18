@@ -49,6 +49,16 @@ type presenceEvent struct {
 	Update presence.Update
 }
 
+// pixelChange records a single pixel's prior color so an action can be undone.
+type pixelChange struct{ x, y, prev int }
+
+// action is one undoable operation (a dab, a /circle, or a draw-mode stroke):
+// the set of pixels it changed, with their previous colors.
+type action []pixelChange
+
+// write is a pending pixel write to flush to Redis.
+type write struct{ x, y, c int }
+
 // Deps are everything needed to build a Model. Channels and the Redis-backed
 // dependencies are optional in tests (nil-safe).
 type Deps struct {
@@ -78,7 +88,13 @@ type Model struct {
 	cursorX, cursorY int
 	camX, camY       int
 	selectedColor    int
-	drawing          bool // continuous draw mode: movement paints a trail
+	drawing          bool   // continuous draw mode: movement paints a trail
+	stroke           action // pixels accumulated during the current draw stroke
+
+	commandMode  bool   // typing a slash command
+	commandInput string // command text being typed (without leading '/')
+	statusMsg    string // transient feedback shown in the status bar
+	undoStack    []action
 
 	width, height int // terminal size in cells
 	remotes       map[string]remote
@@ -137,6 +153,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.commandMode {
+			return m.handleCommandKey(msg)
+		}
 		return m.handleKey(msg)
 
 	case PixelUpdateMsg:
@@ -168,6 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "" // any normal key clears the last command's feedback
 	moved := false
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -185,7 +205,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.announce()
 		return *m, cmd
 	case tea.KeySpace:
-		cmd := m.paint()
+		cmd := m.dab()
 		return *m, cmd
 	case tea.KeyRunes:
 		return m.handleRune(msg.Runes)
@@ -206,14 +226,27 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 	switch r {
 	case 'q':
 		return *m, tea.Quit
+	case '/':
+		// Open the command line; keys now feed the input until Enter/Esc.
+		m.commandMode = true
+		m.commandInput = ""
+		m.statusMsg = ""
+		return *m, nil
 	case 'd':
-		// Toggle continuous draw mode. Turning it on drops a pixel at the cursor
-		// so a stroke starts where you are.
+		// Toggle continuous draw mode. Turning it on begins a stroke and drops a
+		// pixel at the cursor; turning it off commits the stroke as one undo action.
 		m.drawing = !m.drawing
 		if m.drawing {
-			cmd := m.paint()
-			return *m, cmd
+			m.stroke = nil
+			if w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &m.stroke); ok {
+				return *m, m.flush([]write{w})
+			}
+			return *m, nil
 		}
+		if len(m.stroke) > 0 {
+			m.undoStack = append(m.undoStack, m.stroke)
+		}
+		m.stroke = nil
 		return *m, nil
 	case 'h':
 		m.cursorX, moved = clampMove(m.cursorX-1, m.canvasW)
@@ -236,29 +269,54 @@ func (m *Model) handleRune(runes []rune) (tea.Model, tea.Cmd) {
 }
 
 // afterMove recenters the camera, announces the new cursor position, and — when
-// draw mode is active — paints the pixel the cursor just moved onto, so moving
-// lays down a continuous trail.
+// draw mode is active — paints the pixel the cursor just moved onto (into the
+// current stroke), so moving lays down a continuous trail.
 func (m *Model) afterMove() tea.Cmd {
 	m.recenter()
 	cmds := []tea.Cmd{m.announce()}
 	if m.drawing {
-		cmds = append(cmds, m.paint())
+		if w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &m.stroke); ok {
+			cmds = append(cmds, m.flush([]write{w}))
+		}
 	}
 	return tea.Batch(cmds...)
 }
 
-// paint applies the current color at the cursor optimistically and writes through.
-func (m *Model) paint() tea.Cmd {
-	if !m.inBounds(m.cursorX, m.cursorY) {
+// dab paints a single pixel at the cursor as its own undo action.
+func (m *Model) dab() tea.Cmd {
+	var act action
+	w, ok := m.stage(m.cursorX, m.cursorY, m.selectedColor, &act)
+	if !ok {
 		return nil
 	}
-	m.grid[m.cursorY*m.canvasW+m.cursorX] = byte(m.selectedColor)
-	if m.painter == nil {
+	m.undoStack = append(m.undoStack, act)
+	return m.flush([]write{w})
+}
+
+// stage records the pixel's previous color into act, applies the new color to
+// the local grid, and returns the pending Redis write. ok is false (and nothing
+// changes) when (x,y) is out of bounds.
+func (m *Model) stage(x, y, color int, act *action) (write, bool) {
+	if !m.inBounds(x, y) {
+		return write{}, false
+	}
+	idx := y*m.canvasW + x
+	*act = append(*act, pixelChange{x: x, y: y, prev: int(m.grid[idx])})
+	m.grid[idx] = byte(color)
+	return write{x: x, y: y, c: color}, true
+}
+
+// flush returns a single command that writes all pending pixels to Redis in one
+// goroutine, so a large /circle or /undo is one command rather than thousands.
+func (m *Model) flush(ws []write) tea.Cmd {
+	if m.painter == nil || len(ws) == 0 {
 		return nil
 	}
-	x, y, c := m.cursorX, m.cursorY, m.selectedColor
+	painter, ctx := m.painter, m.ctx
 	return func() tea.Msg {
-		_ = m.painter.SetPixel(m.ctx, x, y, c)
+		for _, w := range ws {
+			_ = painter.SetPixel(ctx, w.x, w.y, w.c)
+		}
 		return nil
 	}
 }
@@ -278,6 +336,122 @@ func (m *Model) announce() tea.Cmd {
 
 func (m Model) selfPresence() presence.Update {
 	return presence.Update{ID: m.id, X: m.cursorX, Y: m.cursorY, Color: m.selectedColor, Name: m.name}
+}
+
+// handleCommandKey feeds keystrokes into the command line while command mode is
+// active: Enter runs it, Esc cancels, Backspace edits, other keys type.
+func (m *Model) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return *m, tea.Quit
+	case tea.KeyEsc:
+		m.commandMode = false
+		m.commandInput = ""
+		return *m, nil
+	case tea.KeyEnter:
+		cmd := m.runCommand(parseCommand(m.commandInput))
+		m.commandMode = false
+		m.commandInput = ""
+		return *m, cmd
+	case tea.KeyBackspace:
+		if r := []rune(m.commandInput); len(r) > 0 {
+			m.commandInput = string(r[:len(r)-1])
+		}
+		return *m, nil
+	case tea.KeySpace:
+		m.commandInput += " "
+		return *m, nil
+	case tea.KeyRunes:
+		m.commandInput += string(msg.Runes)
+		return *m, nil
+	}
+	return *m, nil
+}
+
+// runCommand executes a parsed command, sets a status message, and returns any
+// Redis writes / presence updates it produced.
+func (m *Model) runCommand(c command) tea.Cmd {
+	switch c.kind {
+	case cmdTP:
+		m.cursorX = clampInt(c.x, 0, m.canvasW-1)
+		m.cursorY = clampInt(c.y, 0, m.canvasH-1)
+		m.recenter()
+		m.statusMsg = fmt.Sprintf("teleported to %d,%d", m.cursorX, m.cursorY)
+		return m.announce()
+	case cmdCircle:
+		return m.drawCircle(c.size)
+	case cmdUndo:
+		return m.undo(c.count)
+	default:
+		m.statusMsg = c.err
+		return nil
+	}
+}
+
+// drawCircle paints a filled disk of the given radius centered on the cursor in
+// the current color, recorded as a single undo action. The radius is capped to
+// the canvas size to bound the work.
+func (m *Model) drawCircle(size int) tea.Cmd {
+	maxDim := m.canvasW
+	if m.canvasH > maxDim {
+		maxDim = m.canvasH
+	}
+	if size > maxDim {
+		size = maxDim
+	}
+	cx, cy := m.cursorX, m.cursorY
+	r2 := size * size
+	var act action
+	var ws []write
+	for dy := -size; dy <= size; dy++ {
+		for dx := -size; dx <= size; dx++ {
+			if dx*dx+dy*dy > r2 {
+				continue
+			}
+			if w, ok := m.stage(cx+dx, cy+dy, m.selectedColor, &act); ok {
+				ws = append(ws, w)
+			}
+		}
+	}
+	if len(act) > 0 {
+		m.undoStack = append(m.undoStack, act)
+	}
+	m.statusMsg = fmt.Sprintf("circle r=%d (%d px)", size, len(ws))
+	return m.flush(ws)
+}
+
+// undo reverts up to n of this session's most recent actions, restoring each
+// affected pixel to the color it had before the action.
+func (m *Model) undo(n int) tea.Cmd {
+	if len(m.undoStack) == 0 {
+		m.statusMsg = "nothing to undo"
+		return nil
+	}
+	var ws []write
+	undone := 0
+	for n > 0 && len(m.undoStack) > 0 {
+		act := m.undoStack[len(m.undoStack)-1]
+		m.undoStack = m.undoStack[:len(m.undoStack)-1]
+		for i := len(act) - 1; i >= 0; i-- {
+			pc := act[i]
+			m.grid[pc.y*m.canvasW+pc.x] = byte(pc.prev)
+			ws = append(ws, write{x: pc.x, y: pc.y, c: pc.prev})
+		}
+		undone++
+		n--
+	}
+	m.statusMsg = fmt.Sprintf("undid %d action(s)", undone)
+	return m.flush(ws)
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // viewportPixels is the visible pixel area, never larger than the canvas itself.
@@ -377,16 +551,23 @@ func (m Model) remoteCursors() []render.RemoteCursor {
 }
 
 func (m Model) statusBar() string {
+	if m.commandMode {
+		return m.renderer.NewStyle().Bold(true).Render("/" + m.commandInput + "█")
+	}
 	swatch := m.renderer.NewStyle().Foreground(render.ColorAt(m.selectedColor)).Render("█")
 	draw := ""
 	if m.drawing {
 		draw = " │ " + m.renderer.NewStyle().Foreground(render.ColorAt(2)).Bold(true).Render("DRAW")
 	}
+	tail := "1-8/Tab color · Space dab · d draw · / cmd · q quit"
+	if m.statusMsg != "" {
+		tail = m.statusMsg
+	}
 	return fmt.Sprintf(
 		"You: %s │ Color: %s %s (%d/8) │ Pos: %d,%d │ Users: %d%s │ %s",
 		m.name, swatch, render.ColorName(m.selectedColor), m.selectedColor+1,
 		m.cursorX, m.cursorY, len(m.remotes)+1, draw,
-		"1-8/Tab color · Space dab · d draw · hjkl move · q quit",
+		tail,
 	)
 }
 
